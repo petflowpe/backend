@@ -1,0 +1,17 @@
+--- Module 1: Auth Verification ---
+--- Module 5: Operations Verification ---
+Create Vehicle Code: 201
+Vehicle created ID: 2
+Update Location Code: 200
+Create Payment Code: 422
+Payment Detail: {
+    "message": "El campo invoice id es obligatorio. (y 1 error m\u00e1s)",
+    "errors": {
+        "invoice_id": [
+            "El campo invoice id es obligatorio."
+        ],
+        "method": [
+            "El campo method es obligatorio."
+        ]
+    }
+}

@@ -1,0 +1,10 @@
+--- Module 1: Auth Verification ---
+Token obtained: 20|sunat_d...
+--- Module 2: Clients Verification ---
+Create Client Code: 400
+Using existing client ID: 2
+List Clients Code: 200
+Total Clients: 2
+--- Module 2: Pets Verification ---
+Create Pet Code: 201
+Pet created ID: 1

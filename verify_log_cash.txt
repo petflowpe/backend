@@ -1,0 +1,6 @@
+--- Cash Movement Verification ---
+Create Expense Code: 201
+Expense created successfully
+Expense ID: 1
+List Movements Code: 200
+Total movements found: 1

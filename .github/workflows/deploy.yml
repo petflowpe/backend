@@ -1,0 +1,58 @@
+name: 🚀 Deploy VPS Hostinger (PRO)
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 🔐 Configurar SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H ${{ secrets.SSH_HOST }} >> ~/.ssh/known_hosts
+
+      - name: 🚀 Deploy en VPS
+        run: |
+          ssh -i ~/.ssh/deploy_key \
+              -o StrictHostKeyChecking=no \
+              ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} << 'EOF'
+
+          set -e
+          cd ${{ secrets.DEPLOY_PATH }}
+
+          echo "🔄 Actualizando código..."
+          git fetch origin
+          git checkout main
+          git reset --hard origin/main
+          git clean -fd
+
+          echo "📦 Dependencias..."
+          composer install --no-dev --optimize-autoloader
+
+          echo "🗄️ Migraciones..."
+          php artisan migrate --force
+
+          echo "🌱 Seeders..."
+          php artisan db:seed --force
+
+          echo "🧹 Limpiando cache..."
+          php artisan config:clear
+          php artisan route:clear
+          php artisan view:clear
+          php artisan cache:clear
+
+          echo "⚙️ Optimización..."
+          php artisan optimize
+
+          echo "🔐 Permisos..."
+          chown -R www-data:www-data .
+          chmod -R 775 storage bootstrap/cache
+
+          echo "✅ Deploy completado"
+          EOF

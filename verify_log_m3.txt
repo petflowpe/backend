@@ -1,0 +1,6 @@
+--- Module 1: Auth Verification ---
+--- Module 3: Appointments Verification ---
+Create Appointment Code: 201
+Appointment created ID: 1
+List Appointments Code: 200
+Total Appointments: 1

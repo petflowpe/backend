@@ -1,0 +1,7 @@
+--- Auto-Segmentation Verification ---
+Initial Level: Plata
+Create Pet 2 Code: 201
+Create Pet 3 Code: 201
+Final Level (should be Bronce): Bronce
+Create Pet 4 Code: 201
+Final Level (should be Oro): Oro
