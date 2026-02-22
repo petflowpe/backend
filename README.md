@@ -2,7 +2,7 @@
   <img src="./public/assets/images/sunat.png" alt="SUNAT Logo" width="250">
 </p>
 
-# API de Facturación Electrónica SUNAT - Perú
+# API de Facturación Electrónica SUNAT - Perú / Para PetFlow
 
 <p align="center">
   <img src="https://img.shields.io/badge/Laravel-12-FF2D20?style=for-the-badge&logo=laravel&logoColor=white" alt="Laravel 12">
