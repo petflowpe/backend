@@ -35,6 +35,12 @@ class CashSessionController extends Controller
             'notes' => ['nullable', 'string'],
         ]);
 
+        $companyId = (int) $validated['company_id'];
+        $branchId = (int) $validated['branch_id'];
+        if (!\App\Helpers\ScopeHelper::branchBelongsToCompany($branchId, $companyId)) {
+            return response()->json(['success' => false, 'message' => 'La sucursal no pertenece a la empresa indicada.'], 422);
+        }
+
         $userId = Auth::id();
 
         $session = CashSession::create([

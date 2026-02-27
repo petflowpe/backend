@@ -21,22 +21,22 @@ return new class extends Migration
             $table->string('telefono')->nullable();
             $table->string('email')->nullable();
             $table->string('web')->nullable();
-            
+
             // Configuración SUNAT
             $table->string('usuario_sol');
             $table->string('clave_sol');
             $table->text('certificado_pem')->nullable();
             $table->string('certificado_password')->nullable();
-            
+
             // Endpoints
             $table->string('endpoint_beta');
             $table->string('endpoint_produccion');
             $table->boolean('modo_produccion')->default(false);
-            
+
             // Logo y configuraciones adicionales
             $table->string('logo_path')->nullable();
-            $table->json('configuraciones')->nullable(); // Para configuraciones extras
-            
+            $table->json('configuraciones')->nullable();
+
             $table->boolean('activo')->default(true);
             $table->timestamps();
         });

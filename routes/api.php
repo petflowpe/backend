@@ -51,6 +51,8 @@ use App\Http\Controllers\Api\ZoneController;
 use App\Http\Controllers\Api\RoutePlanController;
 use App\Http\Controllers\Api\AccountingEntryController;
 use App\Http\Controllers\Api\SearchController;
+use App\Http\Controllers\Api\CoreController;
+use App\Http\Middleware\EnsureUserCompanyScope;
 
 // ========================
 // RUTAS PÚBLICAS (SIN AUTENTICACIÓN)
@@ -78,7 +80,7 @@ Route::post('/auth/request-access', [AuthController::class, 'requestAccess']);
 // ========================
 // RUTAS PROTEGIDAS (CON AUTENTICACIÓN)
 // ========================
-Route::prefix('v1')->middleware('auth:sanctum')->group(function () {
+Route::prefix('v1')->middleware(['auth:sanctum', EnsureUserCompanyScope::class])->group(function () {
 
     // ========================
     // AUTENTICACIÓN Y USUARIO
@@ -86,6 +88,10 @@ Route::prefix('v1')->middleware('auth:sanctum')->group(function () {
     Route::post('/auth/logout', [AuthController::class, 'logout']);
     Route::get('/auth/me', [AuthController::class, 'me']);
     Route::post('/auth/create-user', [AuthController::class, 'createUser']);
+
+    // Core: monedas y módulos activos
+    Route::get('/core/currencies', [CoreController::class, 'currencies']);
+    Route::get('/core/modules', [CoreController::class, 'modules']);
 
     Route::get('/users', [UserController::class, 'index']);
     Route::get('/users/{id}', [UserController::class, 'show']);

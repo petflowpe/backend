@@ -17,6 +17,8 @@ class DatabaseSeeder extends Seeder
             UbiProvinciasSeeder::class,
             UbiDistritoSeeder::class,
             RolesAndPermissionsSeeder::class,
+            CurrenciesSeeder::class,
+            ModulesSeeder::class,
             DemoDataSeeder::class,
         ]);
     }

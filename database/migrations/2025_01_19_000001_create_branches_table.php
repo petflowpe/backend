@@ -20,17 +20,16 @@ return new class extends Migration
             $table->string('departamento');
             $table->string('telefono')->nullable();
             $table->string('email')->nullable();
-            
-            // Configuraciones específicas de la sucursal
-            $table->json('series_factura')->nullable(); // ['F001', 'F002']
-            $table->json('series_boleta')->nullable();  // ['B001', 'B002']
-            $table->json('series_nota_credito')->nullable(); // ['FC01', 'BC01']
-            $table->json('series_nota_debito')->nullable();  // ['FD01', 'BD01']
-            $table->json('series_guia_remision')->nullable(); // ['T001', 'T002']
-            
+
+            $table->json('series_factura')->nullable();
+            $table->json('series_boleta')->nullable();
+            $table->json('series_nota_credito')->nullable();
+            $table->json('series_nota_debito')->nullable();
+            $table->json('series_guia_remision')->nullable();
+
             $table->boolean('activo')->default(true);
             $table->timestamps();
-            
+
             $table->unique(['company_id', 'codigo']);
         });
     }

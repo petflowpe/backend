@@ -66,7 +66,10 @@ class RoutePlanController extends Controller
             'stops.*.client_id' => 'required_with:stops|integer|exists:clients,id',
             'stops.*.order' => 'nullable|integer|min:0',
         ]);
-        $companyId = $validated['company_id'] ?? $request->user()?->company_id ?? 1;
+        $companyId = (int) ($validated['company_id'] ?? \App\Helpers\ScopeHelper::companyId($request) ?? $request->user()?->company_id);
+        if (!$companyId) {
+            return response()->json(['message' => 'company_id es requerido o el usuario debe tener empresa asignada.'], 422);
+        }
         $route = RouteModel::create([
             'company_id' => $companyId,
             'zone_id' => $validated['zone_id'] ?? null,

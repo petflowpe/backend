@@ -266,9 +266,15 @@ class VoidedDocumentController extends Controller
                 'tipo_documento' => 'nullable|in:01,03,07,08,09'
             ]);
 
+            $companyId = (int) $request->company_id;
+            $branchId = (int) $request->branch_id;
+            if (!\App\Helpers\ScopeHelper::branchBelongsToCompany($branchId, $companyId)) {
+                return response()->json(['success' => false, 'message' => 'La sucursal no pertenece a la empresa indicada.'], 422);
+            }
+
             $documents = $this->documentService->getDocumentsForVoiding(
-                $request->company_id,
-                $request->branch_id,
+                $companyId,
+                $branchId,
                 $request->fecha_referencia,
                 $request->tipo_documento
             );

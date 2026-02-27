@@ -7,6 +7,8 @@ use Illuminate\Database\Seeder;
 use App\Models\Role;
 use App\Models\Permission;
 use App\Models\User;
+use App\Models\Company;
+use App\Models\Branch;
 use Illuminate\Support\Facades\Hash;
 
 class RolesAndPermissionsSeeder extends Seeder
@@ -130,6 +132,39 @@ class RolesAndPermissionsSeeder extends Seeder
     {
         $this->logInfo('Creando usuarios por defecto...');
 
+        // Asegurar que exista al menos una empresa (para usuarios con company_id)
+        $company = Company::first();
+        if (!$company) {
+            $company = Company::create([
+                'ruc' => '20100000001',
+                'razon_social' => 'SmartPet Demo S.A.C',
+                'nombre_comercial' => 'SmartPet Demo',
+                'direccion' => 'Av. Demo 123',
+                'ubigeo' => '150101',
+                'distrito' => 'Lima',
+                'provincia' => 'Lima',
+                'departamento' => 'Lima',
+                'usuario_sol' => 'DEMO',
+                'clave_sol' => 'DEMO',
+                'endpoint_beta' => 'https://api-beta.sunat.gob.pe',
+                'endpoint_produccion' => 'https://api.sunat.gob.pe',
+                'activo' => true,
+            ]);
+            if (!Branch::where('company_id', $company->id)->exists()) {
+                Branch::create([
+                    'company_id' => $company->id,
+                    'codigo' => '001',
+                    'nombre' => 'Sucursal Principal',
+                    'direccion' => 'Av. Demo 123',
+                    'ubigeo' => '150101',
+                    'distrito' => 'Lima',
+                    'provincia' => 'Lima',
+                    'departamento' => 'Lima',
+                    'activo' => true,
+                ]);
+            }
+        }
+
         // Super Admin
         $superAdminRole = Role::where('name', 'super_admin')->first();
         
@@ -170,7 +205,7 @@ class RolesAndPermissionsSeeder extends Seeder
                 'name' => 'Cliente API',
                 'password' => Hash::make('api123456'),
                 'role_id' => $apiClientRole->id,
-                'company_id' => 1,
+                'company_id' => $company->id,
                 'user_type' => 'api_client',
                 'active' => true,
                 'email_verified_at' => now(),

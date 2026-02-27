@@ -132,7 +132,10 @@ class AppointmentController extends Controller
             }
 
             $data = $validator->validated();
-            $data['company_id'] = $data['company_id'] ?? 1;
+            $data['company_id'] = $data['company_id'] ?? \App\Helpers\ScopeHelper::companyId($request) ?? $request->user()?->company_id;
+            if (empty($data['company_id'])) {
+                return response()->json(['success' => false, 'message' => 'company_id es requerido o el usuario debe tener empresa asignada.'], 422);
+            }
             $data['address'] = $data['address'] ?? '';
 
             // 1. Validar Horario Laboral

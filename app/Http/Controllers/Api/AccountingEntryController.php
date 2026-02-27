@@ -69,7 +69,10 @@ class AccountingEntryController extends Controller
             'lines.*.debit' => 'required|numeric|min:0',
             'lines.*.credit' => 'required|numeric|min:0',
         ]);
-        $companyId = $validated['company_id'] ?? $request->user()?->company_id ?? 1;
+        $companyId = (int) ($validated['company_id'] ?? \App\Helpers\ScopeHelper::companyId($request) ?? $request->user()?->company_id);
+        if (!$companyId) {
+            return response()->json(['message' => 'company_id es requerido o el usuario debe tener empresa asignada.'], 422);
+        }
         $totalDebit = 0;
         $totalCredit = 0;
         foreach ($validated['lines'] as $line) {

@@ -80,7 +80,10 @@ class PurchaseOrderController extends Controller
 
         try {
             DB::beginTransaction();
-            $companyId = (int) ($validated['company_id'] ?? $request->user()?->company_id ?? 1);
+            $companyId = (int) ($validated['company_id'] ?? \App\Helpers\ScopeHelper::companyId($request) ?? $request->user()?->company_id);
+            if (!$companyId) {
+                return response()->json(['message' => 'company_id es requerido o el usuario debe tener empresa asignada.'], 422);
+            }
             $total = 0;
             foreach ($validated['items'] as $row) {
                 $total += (float) $row['quantity'] * (float) $row['unit_cost'];

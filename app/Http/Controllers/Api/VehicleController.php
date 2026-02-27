@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Helpers\ScopeHelper;
 use App\Models\Vehicle;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
@@ -74,6 +75,8 @@ class VehicleController extends Controller
                 'activo' => 'boolean',
                 'horario_disponibilidad' => 'nullable|array',
                 'equipamiento' => 'nullable|array',
+                'fecha_ultimo_mantenimiento' => 'nullable|date',
+                'fecha_proximo_mantenimiento' => 'nullable|date',
             ]);
 
             if ($validator->fails()) {
@@ -84,7 +87,11 @@ class VehicleController extends Controller
                 ], 422);
             }
 
-            $vehicle = Vehicle::create($validator->validated());
+            $data = $validator->validated();
+            if (empty($data['company_id']) && $request->user()) {
+                $data['company_id'] = ScopeHelper::companyId($request) ?? $request->user()->company_id;
+            }
+            $vehicle = Vehicle::create($data);
 
             return response()->json([
                 'success' => true,
@@ -135,10 +142,14 @@ class VehicleController extends Controller
                 'name' => 'sometimes|string|max:255',
                 'type' => 'sometimes|string|in:furgoneta_grande,auto_compacto,camioneta,moto',
                 'placa' => 'nullable|string|max:20',
+                'marca' => 'nullable|string|max:100',
+                'modelo' => 'nullable|string|max:100',
+                'anio' => 'nullable|integer|min:1900|max:' . date('Y'),
                 'driver_id' => 'nullable|integer|exists:users,id',
                 'driver_name' => 'nullable|string|max:255',
                 'activo' => 'boolean',
                 'horario_disponibilidad' => 'nullable|array',
+                'equipamiento' => 'nullable|array',
                 'current_latitude' => 'nullable|numeric',
                 'current_longitude' => 'nullable|numeric',
                 'fecha_ultimo_mantenimiento' => 'nullable|date',

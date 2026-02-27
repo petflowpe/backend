@@ -8,11 +8,7 @@ return new class extends Migration
 {
     public function up(): void
     {
-        // Verificar si la tabla ya existe antes de crearla
-        if (Schema::hasTable('pets')) {
-            return;
-        }
-
+        Schema::dropIfExists('pets');
         Schema::create('pets', function (Blueprint $table) {
             $table->id();
             $table->foreignId('client_id')->constrained('clients')->onDelete('cascade');

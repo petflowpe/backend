@@ -156,6 +156,8 @@ class AuthController extends Controller
                 'id' => $user->id,
                 'name' => $user->name,
                 'email' => $user->email,
+                'locale' => $user->locale ?? config('app.locale', 'es'),
+                'company_id' => $user->company_id,
                 'role' => $user->role ? $user->role->display_name : 'Sin rol',
                 'company' => $user->company ? $user->company->razon_social : null,
                 'permissions' => $user->getAllPermissions(),

@@ -39,7 +39,10 @@ class ZoneController extends Controller
             'coordinates' => 'nullable|array',
             'active' => 'boolean',
         ]);
-        $validated['company_id'] = $validated['company_id'] ?? $request->user()?->company_id ?? 1;
+        $validated['company_id'] = $validated['company_id'] ?? \App\Helpers\ScopeHelper::companyId($request) ?? $request->user()?->company_id;
+        if (empty($validated['company_id'])) {
+            return response()->json(['message' => 'company_id es requerido o el usuario debe tener empresa asignada.'], 422);
+        }
         $zone = Zone::create($validated);
         return response()->json(['success' => true, 'data' => $zone], 201);
     }

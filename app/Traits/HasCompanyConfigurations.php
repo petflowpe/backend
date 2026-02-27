@@ -453,6 +453,36 @@ trait HasCompanyConfigurations
         return $this->getConfig('file_settings', 'general') ?? [];
     }
 
+    /**
+     * Obtener configuración del calendario (intervalos, horas, vista por defecto, etc.)
+     */
+    public function getCalendarConfig(): array
+    {
+        $default = [
+            'show_weekends' => true,
+            'interval_minutes' => 15,
+            'first_day_of_week' => 1, // 1 = Lunes
+            'first_hour' => 8,
+            'last_hour' => 20,
+            'show_day_view_option' => true,
+            'day_view_first_hour' => 8,
+            'day_view_last_hour' => 18,
+            'default_view_current_day' => true,
+            'allow_booking_outside_hours' => false,
+            'worked_hours_per_day' => 8,
+            'daily_plan_enabled' => false,
+            'internal_reservations_enabled' => false,
+            'client_labels_enabled' => true,
+            'create_task_unpaid_invoices' => false,
+            'show_schedules_shift_types' => false,
+            'change_colors_by_status_reason' => false,
+            'show_only_national_holidays' => false,
+            'warn_if_no_visit_reason' => false,
+        ];
+        $config = $this->getConfig('calendar_settings', 'general', null, $default);
+        return is_array($config) ? array_merge($default, $config) : $default;
+    }
+
     // ==================== MÉTODOS DE VALIDACIÓN Y UTILIDAD ====================
 
     /**
@@ -694,6 +724,35 @@ trait HasCompanyConfigurations
                     'backup_automatico' => false,
                 ],
                 'description' => 'Configuraciones de archivos por defecto'
+            ],
+
+            // Calendario y reservas
+            [
+                'config_type' => 'calendar_settings',
+                'environment' => 'general',
+                'service_type' => 'general',
+                'config_data' => [
+                    'show_weekends' => true,
+                    'interval_minutes' => 15,
+                    'first_day_of_week' => 1,
+                    'first_hour' => 8,
+                    'last_hour' => 20,
+                    'show_day_view_option' => true,
+                    'day_view_first_hour' => 8,
+                    'day_view_last_hour' => 18,
+                    'default_view_current_day' => true,
+                    'allow_booking_outside_hours' => false,
+                    'worked_hours_per_day' => 8,
+                    'daily_plan_enabled' => false,
+                    'internal_reservations_enabled' => false,
+                    'client_labels_enabled' => true,
+                    'create_task_unpaid_invoices' => false,
+                    'show_schedules_shift_types' => false,
+                    'change_colors_by_status_reason' => false,
+                    'show_only_national_holidays' => false,
+                    'warn_if_no_visit_reason' => false,
+                ],
+                'description' => 'Opciones de calendario y reserva'
             ]
         ];
     }
