@@ -34,10 +34,10 @@ use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\ConsultaCpeController;
 use App\Http\Controllers\Api\SetupController;
 use App\Http\Controllers\Api\UbigeoController;
-use App\Http\Controllers\Api\ConsultaCpeControllerMejorado;
 use App\Http\Controllers\Api\PetController;
 use App\Http\Controllers\Api\AppointmentController;
 use App\Http\Controllers\Api\VehicleController;
+use App\Http\Controllers\Api\VehicleConfigurationController;
 use App\Http\Controllers\Api\MedicalRecordController;
 use App\Http\Controllers\Api\PetConfigurationController;
 use App\Http\Controllers\Api\NotificationController;
@@ -61,12 +61,16 @@ use App\Http\Middleware\EnsureUserCompanyScope;
 // Información del sistema
 Route::get('/system/info', [AuthController::class, 'systemInfo']);
 
-// Setup del sistema
-Route::prefix('setup')->group(function () {
-    Route::post('/migrate', [SetupController::class, 'migrate']);
-    Route::post('/seed', [SetupController::class, 'seed']);
-    Route::get('/status', [SetupController::class, 'status']);
-});
+// Setup del sistema (endpoints destructivos deshabilitados en producción)
+if (!app()->environment('production')) {
+    Route::prefix('setup')->group(function () {
+        Route::post('/migrate', [SetupController::class, 'migrate']);
+        Route::post('/seed', [SetupController::class, 'seed']);
+    });
+}
+
+// Estado del setup (seguro de exponer en producción)
+Route::get('/setup/status', [SetupController::class, 'status']);
 
 // Inicialización del sistema
 Route::post('/auth/initialize', [AuthController::class, 'initialize']);
@@ -78,9 +82,9 @@ Route::post('/auth/reset-password', [AuthController::class, 'resetPassword']);
 Route::post('/auth/request-access', [AuthController::class, 'requestAccess']);
 
 // ========================
-// RUTAS PROTEGIDAS (CON AUTENTICACIÓN)
+// RUTAS PROTEGIDAS (CON AUTENTICACIÓN + RATE LIMITING)
 // ========================
-Route::prefix('v1')->middleware(['auth:sanctum', EnsureUserCompanyScope::class])->group(function () {
+Route::prefix('v1')->middleware(['auth:sanctum', 'throttle:api', EnsureUserCompanyScope::class])->group(function () {
 
     // ========================
     // AUTENTICACIÓN Y USUARIO
@@ -105,9 +109,13 @@ Route::prefix('v1')->middleware(['auth:sanctum', EnsureUserCompanyScope::class])
     Route::get('/settings', [SettingsController::class, 'index']);
     Route::put('/settings', [SettingsController::class, 'update']);
 
-    // Roles y permisos (lectura)
+    // Roles y permisos
     Route::get('/roles', [RoleController::class, 'index']);
     Route::get('/roles/{id}', [RoleController::class, 'show']);
+    Route::post('/roles', [RoleController::class, 'store']);
+    Route::put('/roles/{id}', [RoleController::class, 'update']);
+    Route::patch('/roles/{id}/toggle', [RoleController::class, 'toggle']);
+    Route::delete('/roles/{id}', [RoleController::class, 'destroy']);
     Route::get('/permissions', [PermissionController::class, 'index']);
 
     // ========================
@@ -488,6 +496,34 @@ Route::prefix('v1')->middleware(['auth:sanctum', EnsureUserCompanyScope::class])
     Route::apiResource('vehicles', VehicleController::class);
     Route::get('/companies/{company}/vehicles', [VehicleController::class, 'index']);
 
+    // Configuraciones de Vehículos (Marcas, Modelos, Tipos de Mantenimiento, Talleres)
+    Route::get('/vehicle-configurations/all', [VehicleConfigurationController::class, 'getAll']);
+    Route::post('/vehicle-configurations', [VehicleConfigurationController::class, 'store']);
+
+    // Vehículos: Mantenimientos / Gastos / Servicios programados
+    Route::get('/vehicle-maintenances', [\App\Http\Controllers\Api\VehicleMaintenanceController::class, 'list']);
+    Route::get('/vehicles/{vehicle}/maintenances', [\App\Http\Controllers\Api\VehicleMaintenanceController::class, 'index']);
+    Route::post('/vehicles/{vehicle}/maintenances', [\App\Http\Controllers\Api\VehicleMaintenanceController::class, 'store']);
+    Route::apiResource('vehicle-maintenances', \App\Http\Controllers\Api\VehicleMaintenanceController::class)
+        ->parameters(['vehicle-maintenances' => 'vehicleMaintenance'])
+        ->except(['index', 'store']);
+
+    Route::get('/vehicle-expenses', [\App\Http\Controllers\Api\VehicleExpenseController::class, 'list']);
+    Route::get('/vehicles/{vehicle}/expenses', [\App\Http\Controllers\Api\VehicleExpenseController::class, 'index']);
+    Route::post('/vehicles/{vehicle}/expenses', [\App\Http\Controllers\Api\VehicleExpenseController::class, 'store']);
+    Route::apiResource('vehicle-expenses', \App\Http\Controllers\Api\VehicleExpenseController::class)
+        ->parameters(['vehicle-expenses' => 'vehicleExpense'])
+        ->except(['index', 'store']);
+
+    Route::get('/vehicle-services', [\App\Http\Controllers\Api\VehicleServiceController::class, 'list']);
+    Route::get('/vehicles/{vehicle}/services', [\App\Http\Controllers\Api\VehicleServiceController::class, 'index']);
+    Route::post('/vehicles/{vehicle}/services', [\App\Http\Controllers\Api\VehicleServiceController::class, 'store']);
+    Route::post('/vehicle-services/{vehicleService}/send-to-maintenance', [\App\Http\Controllers\Api\VehicleServiceController::class, 'sendToMaintenance']);
+    Route::post('/vehicle-services/{vehicleService}/complete', [\App\Http\Controllers\Api\VehicleServiceController::class, 'complete']);
+    Route::apiResource('vehicle-services', \App\Http\Controllers\Api\VehicleServiceController::class)
+        ->parameters(['vehicle-services' => 'vehicleService'])
+        ->except(['index', 'store']);
+
     // ========================
     // REGISTROS MÉDICOS
     // ========================
@@ -505,3 +541,9 @@ Route::prefix('v1')->middleware(['auth:sanctum', EnsureUserCompanyScope::class])
         Route::delete('/{id}', [NotificationController::class, 'destroy']);
     });
 });
+
+// Rutas adicionales de consulta CPE mejorada (v2)
+require __DIR__ . '/api_consulta_mejorada.php';
+
+// API v2 (contrato camelCase para integración con React)
+require __DIR__ . '/api_v2.php';

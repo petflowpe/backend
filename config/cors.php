@@ -25,6 +25,10 @@ return [
         'http://127.0.0.1:5173',
         'http://127.0.0.1:8000',
         'https://frontend-grooming-new.vercel.app',
+        // Producción PetFlow
+        'https://petflow.com',
+        'https://www.petflow.com',
+        'https://api.petflow.com',
         // Añade aquí tu dominio de Vercel si usas uno personalizado, ej:
         // 'https://tu-dominio.vercel.app',
     ],
@@ -32,6 +36,9 @@ return [
     'allowed_origins_patterns' => [
         // Permitir cualquier subdominio de vercel.app
         '#^https://[a-z0-9-]+\.vercel\.app$#',
+        // Desarrollo local: permitir cualquier puerto en localhost/127.0.0.1 (Vite puede usar 3000, 3003, 5173, etc.)
+        '#^http://localhost:\d+$#',
+        '#^http://127\.0\.0\.1:\d+$#',
     ],
 
     'allowed_headers' => [
@@ -40,6 +47,9 @@ return [
         'Content-Type',
         'X-Requested-With',
         'X-XSRF-TOKEN',
+        // Multi-tenant headers (super_admin / multi-empresa)
+        'X-Company-Id',
+        'X-Branch-Id',
     ],
 
     'exposed_headers' => [],

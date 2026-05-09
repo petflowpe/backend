@@ -3,14 +3,12 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-use App\Http\Requests\UpdateGreCredentialsRequest;
-use App\Http\Requests\GreEnvironmentRequest;
-use App\Http\Requests\CopyGreCredentialsRequest;
 use App\Models\Company;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
+use Illuminate\Validation\Rule;
 use Exception;
 
 class GreCredentialsController extends Controller
@@ -70,16 +68,32 @@ class GreCredentialsController extends Controller
     public function update(Request $request, Company $company): JsonResponse
     {
         try {
+            $mode = $request->input('modo', $request->input('environment'));
+            $request->merge(['modo' => $mode]);
+
             $validated = $request->validate([
-                'environment' => 'required|in:beta,produccion',
+                'modo' => ['required', Rule::in(['beta', 'produccion'])],
                 'client_id' => 'required|string|max:255',
                 'client_secret' => 'required|string|max:255',
-                'ruc_proveedor' => 'nullable|string|size:11|regex:/^\d{11}$/',
-                'usuario_sol' => 'nullable|string|max:100',
-                'clave_sol' => 'nullable|string|max:100'
+                'ruc_proveedor' => [
+                    Rule::requiredIf($mode === 'produccion'),
+                    'nullable',
+                    'string',
+                    'size:11',
+                    'regex:/^\d{11}$/',
+                ],
+                'usuario_sol' => [Rule::requiredIf($mode === 'produccion'), 'nullable', 'string', 'max:100'],
+                'clave_sol' => [Rule::requiredIf($mode === 'produccion'), 'nullable', 'string', 'max:100'],
             ]);
             
-            $environment = $validated['environment'];
+            $environment = $validated['modo'];
+
+            // No permitir usar credenciales de prueba (beta) en producción
+            if ($environment === 'produccion' && str_starts_with((string) $validated['client_id'], 'test-')) {
+                throw ValidationException::withMessages([
+                    'modo' => ['No se puede usar una credencial de prueba en producción.'],
+                ]);
+            }
             
             // Preparar credenciales sin el campo environment
             $credentials = [
@@ -91,7 +105,7 @@ class GreCredentialsController extends Controller
             ];
 
             // Configurar credenciales usando el nuevo método
-            $company->setGreCredentials($credentials, $environment);
+            $company->setGreCredentials($environment, $credentials);
 
             Log::info("Credenciales GRE actualizadas", [
                 'company_id' => $company->id,
@@ -104,7 +118,7 @@ class GreCredentialsController extends Controller
                 'message' => "Credenciales GRE para {$environment} actualizadas correctamente",
                 'data' => [
                     'company_id' => $company->id,
-                    'environment' => $environment,
+                    'modo' => $environment,
                     'credenciales_configuradas' => $company->fresh()->hasGreCredentials(),
                 ]
             ]);
@@ -167,7 +181,7 @@ class GreCredentialsController extends Controller
                 'message' => "Conexión con SUNAT ({$environment}) validada correctamente",
                 'data' => [
                     'company_id' => $company->id,
-                    'environment' => $environment,
+                    'modo' => $environment,
                     'client_id' => '***' . substr($credentials['client_id'], -4),
                     'ruc_proveedor' => $credentials['ruc_proveedor'],
                     'timestamp' => now()->toISOString()
@@ -228,12 +242,12 @@ class GreCredentialsController extends Controller
             return response()->json([
                 'success' => true,
                 'data' => [
-                    'environment' => $mode,
-                    'credentials_default' => $defaults[$mode],
-                    'description' => $mode === 'beta' 
+                    'modo' => $mode,
+                    'credenciales_default' => $defaults[$mode],
+                    'descripcion' => $mode === 'beta' 
                         ? 'Credenciales de prueba para ambiente BETA'
                         : 'Credenciales de producción (deben ser configuradas por empresa)',
-                    'note' => $mode === 'beta' 
+                    'nota' => $mode === 'beta' 
                         ? 'Estas credenciales son de prueba y funcionan para testing'
                         : 'Para producción debe obtener credenciales reales de SUNAT'
                 ]
@@ -253,11 +267,12 @@ class GreCredentialsController extends Controller
     public function clear(Request $request, Company $company): JsonResponse
     {
         try {
+            $mode = $request->input('modo', $request->input('environment'));
+            $request->merge(['modo' => $mode]);
             $validated = $request->validate([
-                'environment' => 'required|in:beta,produccion'
+                'modo' => ['required', Rule::in(['beta', 'produccion'])],
             ]);
-            
-            $environment = $validated['environment'];
+            $environment = $validated['modo'] ?? $mode;
 
             // Limpiar credenciales usando el nuevo método
             $company->clearGreCredentials($environment);
@@ -272,10 +287,17 @@ class GreCredentialsController extends Controller
                 'message' => "Credenciales GRE para {$environment} han sido limpiadas",
                 'data' => [
                     'company_id' => $company->id,
-                    'environment' => $environment,
+                    'modo' => $environment,
                     'credenciales_configuradas' => $company->fresh()->hasGreCredentials(),
                 ]
             ]);
+
+        } catch (ValidationException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Errores de validación',
+                'errors' => $e->errors(),
+            ], 422);
 
         } catch (Exception $e) {
             Log::error("Error al limpiar credenciales GRE", [
@@ -296,13 +318,18 @@ class GreCredentialsController extends Controller
     public function copy(Request $request, Company $company): JsonResponse
     {
         try {
+            $request->merge([
+                'origen' => $request->input('origen', $request->input('from_environment')),
+                'destino' => $request->input('destino', $request->input('to_environment')),
+            ]);
+
             $validated = $request->validate([
-                'from_environment' => 'required|in:beta,produccion',
-                'to_environment' => 'required|in:beta,produccion|different:from_environment'
+                'origen' => ['required', Rule::in(['beta', 'produccion'])],
+                'destino' => ['required', Rule::in(['beta', 'produccion']), 'different:origen'],
             ]);
             
-            $fromEnvironment = $validated['from_environment'];
-            $toEnvironment = $validated['to_environment'];
+            $fromEnvironment = $validated['origen'];
+            $toEnvironment = $validated['destino'];
 
             $copied = $company->copyGreCredentials($fromEnvironment, $toEnvironment);
 
@@ -324,11 +351,18 @@ class GreCredentialsController extends Controller
                 'message' => "Credenciales copiadas de {$fromEnvironment} a {$toEnvironment}",
                 'data' => [
                     'company_id' => $company->id,
-                    'from_environment' => $fromEnvironment,
-                    'to_environment' => $toEnvironment,
+                    'origen' => $fromEnvironment,
+                    'destino' => $toEnvironment,
                     'credenciales_configuradas' => $company->fresh()->hasGreCredentials(),
                 ]
             ]);
+
+        } catch (ValidationException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Errores de validación',
+                'errors' => $e->errors(),
+            ], 422);
 
         } catch (Exception $e) {
             Log::error("Error al copiar credenciales GRE", [

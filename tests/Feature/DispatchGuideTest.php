@@ -4,19 +4,29 @@ use App\Models\DispatchGuide;
 use App\Models\Company;
 use App\Models\Branch;
 use App\Models\Client;
+use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Laravel\Sanctum\Sanctum;
 
 uses(RefreshDatabase::class);
 
+beforeEach(function () {
+    $this->company = Company::factory()->create(['activo' => true]);
+    $this->branch = Branch::factory()->create(['company_id' => $this->company->id]);
+    $this->user = User::factory()->create([
+        'company_id' => $this->company->id,
+        'active' => true,
+    ]);
+    Sanctum::actingAs($this->user, ['*']);
+});
+
 test('puede crear una guía de remisión básica con transporte privado', function () {
     // Preparar datos de prueba
-    $company = Company::factory()->create();
-    $branch = Branch::factory()->create(['company_id' => $company->id]);
-    $client = Client::factory()->create();
+    $client = Client::factory()->create(['company_id' => $this->company->id]);
 
     $data = [
-        'company_id' => $company->id,
-        'branch_id' => $branch->id,
+        'company_id' => $this->company->id,
+        'branch_id' => $this->branch->id,
         'destinatario_id' => $client->id,
         'serie' => 'T001',
         'fecha_emision' => '2025-09-06',
@@ -74,8 +84,8 @@ test('puede crear una guía de remisión básica con transporte privado', functi
     // Verificar que se creó en la base de datos
     $guide = DispatchGuide::first();
     expect($guide)->not->toBeNull();
-    expect($guide->company_id)->toBe($company->id);
-    expect($guide->branch_id)->toBe($branch->id);
+    expect($guide->company_id)->toBe($this->company->id);
+    expect($guide->branch_id)->toBe($this->branch->id);
     expect($guide->destinatario_id)->toBe($client->id);
     expect($guide->mod_traslado)->toBe('02');
     expect($guide->peso_total)->toEqual(45.5);
@@ -83,13 +93,11 @@ test('puede crear una guía de remisión básica con transporte privado', functi
 });
 
 test('puede crear una guía de remisión con transporte público', function () {
-    $company = Company::factory()->create();
-    $branch = Branch::factory()->create(['company_id' => $company->id]);
-    $client = Client::factory()->create();
+    $client = Client::factory()->create(['company_id' => $this->company->id]);
 
     $data = [
-        'company_id' => $company->id,
-        'branch_id' => $branch->id,
+        'company_id' => $this->company->id,
+        'branch_id' => $this->branch->id,
         'destinatario_id' => $client->id,
         'serie' => 'T001',
         'fecha_emision' => '2025-09-06',
@@ -145,13 +153,11 @@ test('puede crear una guía de remisión con transporte público', function () {
 });
 
 test('puede crear guía de remisión para traslado entre establecimientos', function () {
-    $company = Company::factory()->create();
-    $branch = Branch::factory()->create(['company_id' => $company->id]);
-    $client = Client::factory()->create();
+    $client = Client::factory()->create(['company_id' => $this->company->id]);
 
     $data = [
-        'company_id' => $company->id,
-        'branch_id' => $branch->id,
+        'company_id' => $this->company->id,
+        'branch_id' => $this->branch->id,
         'destinatario_id' => $client->id,
         'serie' => 'T001',
         'fecha_emision' => '2025-09-06',
@@ -200,13 +206,11 @@ test('puede crear guía de remisión para traslado entre establecimientos', func
 });
 
 test('puede crear guía con vehículos secundarios', function () {
-    $company = Company::factory()->create();
-    $branch = Branch::factory()->create(['company_id' => $company->id]);
-    $client = Client::factory()->create();
+    $client = Client::factory()->create(['company_id' => $this->company->id]);
 
     $data = [
-        'company_id' => $company->id,
-        'branch_id' => $branch->id,
+        'company_id' => $this->company->id,
+        'branch_id' => $this->branch->id,
         'destinatario_id' => $client->id,
         'serie' => 'T001',
         'fecha_emision' => '2025-09-06',
@@ -259,13 +263,11 @@ test('puede crear guía con vehículos secundarios', function () {
 });
 
 test('valida campos requeridos para transporte privado', function () {
-    $company = Company::factory()->create();
-    $branch = Branch::factory()->create(['company_id' => $company->id]);
-    $client = Client::factory()->create();
+    $client = Client::factory()->create(['company_id' => $this->company->id]);
 
     $data = [
-        'company_id' => $company->id,
-        'branch_id' => $branch->id,
+        'company_id' => $this->company->id,
+        'branch_id' => $this->branch->id,
         'destinatario_id' => $client->id,
         'serie' => 'T001',
         'fecha_emision' => '2025-09-06',
@@ -303,13 +305,11 @@ test('valida campos requeridos para transporte privado', function () {
 });
 
 test('valida campos requeridos para transporte público', function () {
-    $company = Company::factory()->create();
-    $branch = Branch::factory()->create(['company_id' => $company->id]);
-    $client = Client::factory()->create();
+    $client = Client::factory()->create(['company_id' => $this->company->id]);
 
     $data = [
-        'company_id' => $company->id,
-        'branch_id' => $branch->id,
+        'company_id' => $this->company->id,
+        'branch_id' => $this->branch->id,
         'destinatario_id' => $client->id,
         'serie' => 'T001',
         'fecha_emision' => '2025-09-06',
@@ -345,12 +345,9 @@ test('valida campos requeridos para transporte público', function () {
 });
 
 test('puede generar PDF para una guía de remisión', function () {
-    $company = Company::factory()->create();
-    $branch = Branch::factory()->create(['company_id' => $company->id]);
-    
     $dispatchGuide = DispatchGuide::factory()->create([
-        'company_id' => $company->id,
-        'branch_id' => $branch->id,
+        'company_id' => $this->company->id,
+        'branch_id' => $this->branch->id,
     ]);
 
     $response = $this->postJson("/api/v1/dispatch-guides/{$dispatchGuide->id}/generate-pdf");
@@ -433,26 +430,23 @@ test('puede obtener el catálogo de modalidades de transporte', function () {
 });
 
 test('puede listar guías de remisión con filtros', function () {
-    $company = Company::factory()->create();
-    $branch = Branch::factory()->create(['company_id' => $company->id]);
-    
     // Crear algunas guías de remisión
     DispatchGuide::factory()->count(3)->create([
-        'company_id' => $company->id,
-        'branch_id' => $branch->id,
+        'company_id' => $this->company->id,
+        'branch_id' => $this->branch->id,
         'estado_sunat' => 'PENDIENTE',
         'mod_traslado' => '02'
     ]);
     
     DispatchGuide::factory()->count(2)->create([
-        'company_id' => $company->id,
-        'branch_id' => $branch->id,
+        'company_id' => $this->company->id,
+        'branch_id' => $this->branch->id,
         'estado_sunat' => 'ACEPTADO',
         'mod_traslado' => '01'
     ]);
 
     // Filtrar por estado
-    $response = $this->getJson("/api/v1/dispatch-guides?company_id={$company->id}&estado_sunat=PENDIENTE");
+    $response = $this->getJson("/api/v1/dispatch-guides?company_id={$this->company->id}&estado_sunat=PENDIENTE");
 
     $response->assertStatus(200)
             ->assertJson([
@@ -464,7 +458,7 @@ test('puede listar guías de remisión con filtros', function () {
     expect(count($data))->toBe(3);
 
     // Filtrar por modalidad
-    $response2 = $this->getJson("/api/v1/dispatch-guides?company_id={$company->id}&mod_traslado=01");
+    $response2 = $this->getJson("/api/v1/dispatch-guides?company_id={$this->company->id}&mod_traslado=01");
 
     $data2 = $response2->json('data.data');
     expect(count($data2))->toBe(2);

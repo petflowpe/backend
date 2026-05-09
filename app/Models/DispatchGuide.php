@@ -93,6 +93,70 @@ class DispatchGuide extends Model
         return $this->belongsTo(Client::class);
     }
 
+    public function getDestinatarioIdAttribute(): ?int
+    {
+        return $this->client_id;
+    }
+
+    public function getTransportistaRazonSocialAttribute(): ?string
+    {
+        return is_array($this->transportista) ? ($this->transportista['razon_social'] ?? null) : null;
+    }
+
+    public function getTransportistaNroMtcAttribute(): ?string
+    {
+        return is_array($this->transportista) ? ($this->transportista['nro_mtc'] ?? null) : null;
+    }
+
+    public function getVehiculosSecundariosAttribute(): array
+    {
+        $vehiculo = is_array($this->vehiculo) ? $this->vehiculo : [];
+        $sec = $vehiculo['vehiculos_secundarios'] ?? $vehiculo['secundarios'] ?? [];
+        return is_array($sec) ? $sec : [];
+    }
+
+    public function getConductorTipoDocAttribute(): ?string
+    {
+        return is_array($this->vehiculo) && is_array($this->vehiculo['conductor'] ?? null)
+            ? ($this->vehiculo['conductor']['tipo_doc'] ?? null)
+            : null;
+    }
+
+    public function getConductorNumDocAttribute(): ?string
+    {
+        return is_array($this->vehiculo) && is_array($this->vehiculo['conductor'] ?? null)
+            ? ($this->vehiculo['conductor']['num_doc'] ?? null)
+            : null;
+    }
+
+    public function getConductorLicenciaAttribute(): ?string
+    {
+        return is_array($this->vehiculo) && is_array($this->vehiculo['conductor'] ?? null)
+            ? ($this->vehiculo['conductor']['licencia'] ?? null)
+            : null;
+    }
+
+    public function getConductorNombresAttribute(): ?string
+    {
+        return is_array($this->vehiculo) && is_array($this->vehiculo['conductor'] ?? null)
+            ? ($this->vehiculo['conductor']['nombres'] ?? null)
+            : null;
+    }
+
+    public function getConductorApellidosAttribute(): ?string
+    {
+        return is_array($this->vehiculo) && is_array($this->vehiculo['conductor'] ?? null)
+            ? ($this->vehiculo['conductor']['apellidos'] ?? null)
+            : null;
+    }
+
+    public function getVehiculoPlacaAttribute(): ?string
+    {
+        return is_array($this->vehiculo)
+            ? ($this->vehiculo['placa'] ?? $this->vehiculo['placa_principal'] ?? null)
+            : null;
+    }
+
     public function getTipoDocumentoNameAttribute(): string
     {
         return 'Guía de Remisión Electrónica';

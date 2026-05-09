@@ -4,19 +4,29 @@ use App\Models\DebitNote;
 use App\Models\Company;
 use App\Models\Branch;
 use App\Models\Client;
+use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Laravel\Sanctum\Sanctum;
 
 uses(RefreshDatabase::class);
 
+beforeEach(function () {
+    $this->company = Company::factory()->create(['activo' => true]);
+    $this->branch = Branch::factory()->create(['company_id' => $this->company->id]);
+    $this->user = User::factory()->create([
+        'company_id' => $this->company->id,
+        'active' => true,
+    ]);
+    Sanctum::actingAs($this->user, ['*']);
+});
+
 test('puede crear una nota de débito básica', function () {
     // Preparar datos de prueba
-    $company = Company::factory()->create();
-    $branch = Branch::factory()->create(['company_id' => $company->id]);
-    $client = Client::factory()->create();
+    Client::factory()->create(['company_id' => $this->company->id]);
 
     $data = [
-        'company_id' => $company->id,
-        'branch_id' => $branch->id,
+        'company_id' => $this->company->id,
+        'branch_id' => $this->branch->id,
         'serie' => 'FD01',
         'fecha_emision' => '2025-09-06',
         'moneda' => 'PEN',
@@ -59,13 +69,11 @@ test('puede crear una nota de débito básica', function () {
 });
 
 test('puede crear una nota de débito por intereses por mora', function () {
-    $company = Company::factory()->create();
-    $branch = Branch::factory()->create(['company_id' => $company->id]);
-    $client = Client::factory()->create();
+    Client::factory()->create(['company_id' => $this->company->id]);
 
     $data = [
-        'company_id' => $company->id,
-        'branch_id' => $branch->id,
+        'company_id' => $this->company->id,
+        'branch_id' => $this->branch->id,
         'serie' => 'FD01',
         'fecha_emision' => '2025-09-06',
         'moneda' => 'PEN',
@@ -105,12 +113,9 @@ test('puede crear una nota de débito por intereses por mora', function () {
 });
 
 test('puede crear una nota de débito para boleta', function () {
-    $company = Company::factory()->create();
-    $branch = Branch::factory()->create(['company_id' => $company->id]);
-
     $data = [
-        'company_id' => $company->id,
-        'branch_id' => $branch->id,
+        'company_id' => $this->company->id,
+        'branch_id' => $this->branch->id,
         'serie' => 'BD01',
         'fecha_emision' => '2025-09-06',
         'moneda' => 'PEN',
@@ -147,12 +152,9 @@ test('puede crear una nota de débito para boleta', function () {
 });
 
 test('valida motivos correctos de nota de débito', function () {
-    $company = Company::factory()->create();
-    $branch = Branch::factory()->create(['company_id' => $company->id]);
-
     $data = [
-        'company_id' => $company->id,
-        'branch_id' => $branch->id,
+        'company_id' => $this->company->id,
+        'branch_id' => $this->branch->id,
         'serie' => 'FD01',
         'fecha_emision' => '2025-09-06',
         'moneda' => 'PEN',
@@ -207,23 +209,20 @@ test('puede obtener el catálogo de motivos', function () {
 });
 
 test('puede listar notas de débito con filtros', function () {
-    $company = Company::factory()->create();
-    $branch = Branch::factory()->create(['company_id' => $company->id]);
-    
     // Crear algunas notas de débito
     DebitNote::factory()->count(3)->create([
-        'company_id' => $company->id,
-        'branch_id' => $branch->id,
+        'company_id' => $this->company->id,
+        'branch_id' => $this->branch->id,
         'estado_sunat' => 'PENDIENTE'
     ]);
     
     DebitNote::factory()->count(2)->create([
-        'company_id' => $company->id,
-        'branch_id' => $branch->id,
+        'company_id' => $this->company->id,
+        'branch_id' => $this->branch->id,
         'estado_sunat' => 'ACEPTADO'
     ]);
 
-    $response = $this->getJson("/api/v1/debit-notes?company_id={$company->id}&estado_sunat=PENDIENTE");
+    $response = $this->getJson("/api/v1/debit-notes?company_id={$this->company->id}&estado_sunat=PENDIENTE");
 
     $response->assertStatus(200)
             ->assertJson([
@@ -236,12 +235,9 @@ test('puede listar notas de débito con filtros', function () {
 });
 
 test('puede generar PDF para una nota de débito', function () {
-    $company = Company::factory()->create();
-    $branch = Branch::factory()->create(['company_id' => $company->id]);
-    
     $debitNote = DebitNote::factory()->create([
-        'company_id' => $company->id,
-        'branch_id' => $branch->id,
+        'company_id' => $this->company->id,
+        'branch_id' => $this->branch->id,
     ]);
 
     $response = $this->postJson("/api/v1/debit-notes/{$debitNote->id}/generate-pdf");

@@ -12,6 +12,16 @@ class StoreDispatchGuideRequest extends FormRequest
         return true;
     }
 
+    protected function prepareForValidation(): void
+    {
+        // Compatibilidad con payload legacy: "fec_traslado" -> "fecha_traslado"
+        if ($this->filled('fec_traslado') && !$this->filled('fecha_traslado')) {
+            $this->merge([
+                'fecha_traslado' => $this->input('fec_traslado'),
+            ]);
+        }
+    }
+
     public function rules(): array
     {
         return [

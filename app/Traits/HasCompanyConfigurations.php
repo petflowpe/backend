@@ -43,6 +43,29 @@ trait HasCompanyConfigurations
      */
     public function getConfig(string $configType, string $environment = null, string $serviceType = null, $default = null)
     {
+        // Compatibilidad con legacy: soporte de notación "credenciales_gre.<ambiente>"
+        if (str_contains($configType, '.')) {
+            [$root, $maybeEnv] = array_pad(explode('.', $configType, 2), 2, null);
+            if ($root === 'credenciales_gre') {
+                $fresh = $this->fresh();
+                if (!$fresh) {
+                    return $default;
+                }
+
+                $env = $maybeEnv ?: ($this->modo_produccion ? 'produccion' : 'beta');
+
+                return [
+                    'client_id' => $env === 'produccion' ? $fresh->gre_client_id_produccion : $fresh->gre_client_id_beta,
+                    'client_secret' => $env === 'produccion' ? $fresh->gre_client_secret_produccion : $fresh->gre_client_secret_beta,
+                    'ruc_proveedor' => $fresh->gre_ruc_proveedor ?? $fresh->ruc,
+                    'usuario_sol' => $fresh->gre_usuario_sol ?? $fresh->usuario_sol,
+                    'clave_sol' => $fresh->gre_clave_sol ?? $fresh->clave_sol,
+                ];
+            }
+
+            return $default;
+        }
+
         $environment = $environment ?? ($this->modo_produccion ? 'produccion' : 'beta');
         $cacheKey = $this->getConfigCacheKey("{$configType}_{$environment}_{$serviceType}");
 
@@ -262,9 +285,22 @@ trait HasCompanyConfigurations
     /**
      * Configurar credenciales GRE para un ambiente específico
      */
-    public function setGreCredentials(array $credentials, string $environment = null): void
+    public function setGreCredentials(string|array $environmentOrCredentials, array|string|null $credentialsOrEnvironment = null): void
     {
-        $environment = $environment ?? ($this->modo_produccion ? 'produccion' : 'beta');
+        // Soporta ambas firmas:
+        // - setGreCredentials('beta', [...]) (usado en tests)
+        // - setGreCredentials([...], 'beta') (usado en código legacy)
+        if (is_string($environmentOrCredentials) && is_array($credentialsOrEnvironment)) {
+            $environment = $environmentOrCredentials;
+            $credentials = $credentialsOrEnvironment;
+        } elseif (is_array($environmentOrCredentials) && (is_string($credentialsOrEnvironment) || $credentialsOrEnvironment === null)) {
+            $credentials = $environmentOrCredentials;
+            $environment = $credentialsOrEnvironment;
+        } else {
+            throw new \InvalidArgumentException('Parámetros inválidos para setGreCredentials');
+        }
+
+        $environment = $environment ?: ($this->modo_produccion ? 'produccion' : 'beta');
         
         $updateData = [];
         

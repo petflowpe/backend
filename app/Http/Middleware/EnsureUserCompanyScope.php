@@ -4,6 +4,7 @@ namespace App\Http\Middleware;
 
 use Closure;
 use Illuminate\Http\Request;
+use Illuminate\Support\Str;
 use Symfony\Component\HttpFoundation\Response;
 
 /**
@@ -26,6 +27,8 @@ class EnsureUserCompanyScope
         // Super admin puede elegir empresa vía header (útil para multi-tenant)
         $requestCompanyId = $request->header('X-Company-Id') ? (int) $request->header('X-Company-Id') : null;
         $requestBranchId = $request->header('X-Branch-Id') ? (int) $request->header('X-Branch-Id') : null;
+        $bodyOrQueryCompanyId = $request->has('company_id') ? (int) $request->input('company_id') : null;
+        $bodyOrQueryBranchId = $request->has('branch_id') ? (int) $request->input('branch_id') : null;
 
         if ($user->hasRole('super_admin') && $requestCompanyId) {
             $companyId = $requestCompanyId;
@@ -45,6 +48,36 @@ class EnsureUserCompanyScope
             }
         }
 
+        // Enforzar aislamiento por empresa para usuarios no super_admin:
+        // si intentan enviar company_id/branch_id distintos, bloquear.
+        if (!$user->hasRole('super_admin') && $user->company_id) {
+            if ($requestCompanyId && (int) $requestCompanyId !== (int) $user->company_id) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'No autorizado: company scope inválido',
+                ], 403);
+            }
+            if ($bodyOrQueryCompanyId && (int) $bodyOrQueryCompanyId !== (int) $user->company_id) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'No autorizado: company_id inválido',
+                ], 403);
+            }
+        }
+
+        // Si el request no tiene branch en header pero sí en body/query, permitir solo si pertenece a companyId efectivo.
+        if ($branchId === null && $bodyOrQueryBranchId && $companyId) {
+            $branch = \App\Models\Branch::where('id', $bodyOrQueryBranchId)->where('company_id', $companyId)->first();
+            if ($branch) {
+                $branchId = $bodyOrQueryBranchId;
+            } else {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'No autorizado: branch_id inválido',
+                ], 403);
+            }
+        }
+
         // Exponer en el request para que los controladores usen request()->attributes
         $request->attributes->set('scope_company_id', $companyId);
         $request->attributes->set('scope_branch_id', $branchId);
@@ -54,6 +87,15 @@ class EnsureUserCompanyScope
             '_scope_company_id' => $companyId,
             '_scope_branch_id' => $branchId,
         ]);
+
+        // Compatibilidad: muchos controladores legacy leen company_id/branch_id del request.
+        // En producción, forzamos que reflejen el scope efectivo (salvo super_admin).
+        if (!$user->hasRole('super_admin')) {
+            $request->merge([
+                'company_id' => $companyId,
+                'branch_id' => $branchId,
+            ]);
+        }
 
         // Establecer locale del usuario para respuestas API
         if (!empty($user->locale)) {
