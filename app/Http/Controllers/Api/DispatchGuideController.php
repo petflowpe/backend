@@ -31,12 +31,16 @@ class DispatchGuideController extends Controller
             $query = DispatchGuide::with(['company', 'branch', 'destinatario']);
 
             // Filtros
-            if ($request->has('company_id')) {
-                $query->where('company_id', $request->company_id);
+            $scopeCompanyId = $request->attributes->get('scope_company_id');
+            $companyId = $scopeCompanyId ?: $request->input('company_id');
+            if (!empty($companyId)) {
+                $query->where('company_id', (int) $companyId);
             }
 
-            if ($request->has('branch_id')) {
-                $query->where('branch_id', $request->branch_id);
+            $scopeBranchId = $request->attributes->get('scope_branch_id');
+            $branchId = $scopeBranchId ?: $request->input('branch_id');
+            if (!empty($branchId)) {
+                $query->where('branch_id', (int) $branchId);
             }
 
             if ($request->has('estado_sunat')) {
@@ -280,8 +284,43 @@ class DispatchGuideController extends Controller
 
     public function generatePdf($id, Request $request)
     {
-        $dispatchGuide = DispatchGuide::with(['company', 'branch', 'destinatario'])->findOrFail($id);
-        return $this->generateDocumentPdf($dispatchGuide, 'dispatch-guide', $request);
+        try {
+            $dispatchGuide = DispatchGuide::with(['company', 'branch', 'destinatario'])->findOrFail($id);
+
+            $format = (string) $request->input('format', 'A4');
+            $this->documentService->generateDispatchGuidePdf($dispatchGuide, $format);
+            $dispatchGuide->refresh();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'PDF de guía de remisión generado correctamente',
+                'data' => [
+                    'id' => $dispatchGuide->id,
+                    'serie' => $dispatchGuide->serie,
+                    'correlativo' => $dispatchGuide->correlativo,
+                    'numero_documento' => $dispatchGuide->serie . '-' . $dispatchGuide->correlativo,
+                    'fecha_emision' => $dispatchGuide->fecha_emision,
+                    'fecha_traslado' => $dispatchGuide->fecha_traslado,
+                    'pdf_path' => $dispatchGuide->pdf_path,
+                    'pdf_url' => $dispatchGuide->pdf_path ? url('storage/' . $dispatchGuide->pdf_path) : null,
+                    'download_url' => url("/api/v1/dispatch-guides/{$dispatchGuide->id}/download-pdf"),
+                    'estado_sunat' => $dispatchGuide->estado_sunat,
+                    'peso_total' => $dispatchGuide->peso_total,
+                    'modalidad_traslado' => $dispatchGuide->modalidad_traslado_name,
+                    'motivo_traslado' => $dispatchGuide->motivo_traslado_name,
+                    'destinatario' => [
+                        'numero_documento' => $dispatchGuide->destinatario?->numero_documento,
+                        'razon_social' => $dispatchGuide->destinatario?->razon_social,
+                    ],
+                ],
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al generar PDF',
+                'error' => $e->getMessage(),
+            ], 500);
+        }
     }
 
     public function getTransferReasons(): JsonResponse

@@ -123,9 +123,14 @@ class AuthController extends Controller
                 'id' => $user->id,
                 'name' => $user->name,
                 'email' => $user->email,
-                'role' => $user->role ? $user->role->display_name : 'Sin rol',
+                'role' => $user->role ? [
+                    'name' => $user->role->name,
+                    'display_name' => $user->role->display_name,
+                ] : null,
+                'role_key' => $user->role?->name,
+                'role_display' => $user->role ? $user->role->display_name : 'Sin rol',
                 'company_id' => $user->company_id,
-                'permissions' => $abilities
+                'permissions' => $abilities,
             ],
             'access_token' => $token,
             'token_type' => 'Bearer'
@@ -156,11 +161,18 @@ class AuthController extends Controller
                 'id' => $user->id,
                 'name' => $user->name,
                 'email' => $user->email,
-                'role' => $user->role ? $user->role->display_name : 'Sin rol',
+                'locale' => $user->locale ?? config('app.locale', 'es'),
+                'company_id' => $user->company_id,
+                'role' => $user->role ? [
+                    'name' => $user->role->name,
+                    'display_name' => $user->role->display_name,
+                ] : null,
+                'role_key' => $user->role?->name,
+                'role_display' => $user->role ? $user->role->display_name : 'Sin rol',
                 'company' => $user->company ? $user->company->razon_social : null,
                 'permissions' => $user->getAllPermissions(),
                 'last_login_at' => $user->last_login_at,
-                'created_at' => $user->created_at
+                'created_at' => $user->created_at,
             ]
         ]);
     }

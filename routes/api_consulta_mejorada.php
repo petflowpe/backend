@@ -5,9 +5,11 @@
  * Incluir en routes/api.php después de las rutas existentes
  */
 
+use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\ConsultaCpeControllerMejorado;
+use App\Http\Middleware\EnsureUserCompanyScope;
 
-Route::middleware('auth:sanctum')->prefix('v1')->group(function () {
+Route::middleware(['auth:sanctum', 'throttle:api', EnsureUserCompanyScope::class])->prefix('v1')->group(function () {
     
     // ========================
     // CONSULTA CPE MEJORADA (CON FALLBACK SOAP)

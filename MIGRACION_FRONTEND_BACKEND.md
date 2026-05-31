@@ -1,5 +1,9 @@
 # 🚀 Migración: Frontend → Backend Laravel Centralizado
 
+> Para la especificación ordenada de integración (contrato API, headers tenant, módulos y roadmap), ver:
+> - `backend/docs/INTEGRACION_FRONTEND_SMARTPET.md`
+> - `ANALISIS-SISTEMA.md` (análisis por módulos + recomendaciones)
+
 ## ✅ Lo que se ha implementado
 
 ### 1. **Backend Laravel - Nuevas Tablas y Modelos**
@@ -58,7 +62,7 @@ Route::get('/clients/{clientId}/medical-records', [MedicalRecordController::clas
 ### Paso 1: Ejecutar migraciones en el backend
 
 ```bash
-cd backend-grooming
+cd backend
 php artisan migrate
 ```
 
@@ -147,7 +151,7 @@ Para probar las nuevas APIs:
 
 ```bash
 # Backend
-cd backend-grooming
+cd backend
 php artisan serve
 
 # Frontend
@@ -191,7 +195,8 @@ npm run dev
 
 ## 🎯 Estado actual
 
-- ✅ Backend: 100% listo (migraciones, modelos, controladores, rutas)
+- ✅ Backend: base lista (migraciones, modelos, controladores, rutas principales)
+- ⚠️ Pendiente recomendado: estandarizar “scope por empresa” (no depender de `company_id` en body/query) y documentar/normalizar contrato JSON (camelCase vía Resources).
 - ✅ Frontend: 20% migrado (solo useClients)
 - ⏳ Pendiente: Migrar hooks restantes y AuthContext
 

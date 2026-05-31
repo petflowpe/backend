@@ -28,12 +28,16 @@ class DebitNoteController extends Controller
             $query = DebitNote::with(['company', 'branch', 'client']);
 
             // Filtros
-            if ($request->has('company_id')) {
-                $query->where('company_id', $request->company_id);
+            $scopeCompanyId = $request->attributes->get('scope_company_id');
+            $companyId = $scopeCompanyId ?: $request->input('company_id');
+            if (!empty($companyId)) {
+                $query->where('company_id', (int) $companyId);
             }
 
-            if ($request->has('branch_id')) {
-                $query->where('branch_id', $request->branch_id);
+            $scopeBranchId = $request->attributes->get('scope_branch_id');
+            $branchId = $scopeBranchId ?: $request->input('branch_id');
+            if (!empty($branchId)) {
+                $query->where('branch_id', (int) $branchId);
             }
 
             if ($request->has('estado_sunat')) {

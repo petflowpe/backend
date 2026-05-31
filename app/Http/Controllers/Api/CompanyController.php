@@ -72,6 +72,7 @@ class CompanyController extends Controller
      */
     public function show(Company $company): JsonResponse
     {
+        $this->authorize('view', $company);
         try {
             $company->load([
                 'branches',
@@ -103,6 +104,7 @@ class CompanyController extends Controller
      */
     public function update(UpdateCompanyRequest $request, Company $company): JsonResponse
     {
+        $this->authorize('update', $company);
         try {
             $validatedData = $this->processRequestData($request);
             $company->update($validatedData);
@@ -134,6 +136,7 @@ class CompanyController extends Controller
      */
     public function destroy(Company $company): JsonResponse
     {
+        $this->authorize('delete', $company);
         try {
             if ($this->hasAssociatedDocuments($company)) {
                 return response()->json([

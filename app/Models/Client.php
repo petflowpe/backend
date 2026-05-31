@@ -14,6 +14,8 @@ class Client extends Model
 
     protected $fillable = [
         'company_id',
+        'zone_id',
+        'client_type',
         'tipo_documento',
         'numero_documento',
         'razon_social',
@@ -96,6 +98,11 @@ class Client extends Model
     public function company(): BelongsTo
     {
         return $this->belongsTo(Company::class);
+    }
+
+    public function zone(): BelongsTo
+    {
+        return $this->belongsTo(Zone::class);
     }
 
     public function getDocumentTypeNameAttribute(): string

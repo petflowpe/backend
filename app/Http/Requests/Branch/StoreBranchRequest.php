@@ -14,7 +14,7 @@ class StoreBranchRequest extends FormRequest
 
     protected function prepareForValidation(): void
     {
-        // Alta rápida desde UI: relleno mínimo válido (ASCII) si no vienen los campos SUNAT/Ubigeo.
+        // Alta rapida desde UI: relleno minimo valido si no vienen campos SUNAT/Ubigeo.
         $merge = [];
         if (!$this->filled('direccion')) {
             $merge['direccion'] = '-';

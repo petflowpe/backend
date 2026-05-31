@@ -38,6 +38,7 @@ class CompanyConfigService
             'invoice_settings' => $company->getInvoiceConfig(),
             'gre_settings' => $company->getGuideConfig(),
             'document_settings' => $company->getDocumentConfig(),
+            'calendar_settings' => $company->getCalendarConfig(),
         ];
         
         // Cache por 30 minutos
@@ -65,7 +66,8 @@ class CompanyConfigService
                 'summary_settings',
                 'void_settings',
                 'notification_settings',
-                'security_settings'
+                'security_settings',
+                'calendar_settings',
             ];
             
             if (!in_array($section, $validSections)) {
@@ -228,6 +230,9 @@ class CompanyConfigService
                 
             case 'service_endpoints':
                 return $this->validateSunatServicesConfig($data);
+
+            case 'calendar_settings':
+                return $data; // Validación en el controlador
                 
             default:
                 return $data; // Para otras secciones, devolver tal como está

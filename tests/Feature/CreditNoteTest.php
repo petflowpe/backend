@@ -4,19 +4,29 @@ use App\Models\CreditNote;
 use App\Models\Company;
 use App\Models\Branch;
 use App\Models\Client;
+use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Laravel\Sanctum\Sanctum;
 
 uses(RefreshDatabase::class);
 
+beforeEach(function () {
+    $this->company = Company::factory()->create(['activo' => true]);
+    $this->branch = Branch::factory()->create(['company_id' => $this->company->id]);
+    $this->user = User::factory()->create([
+        'company_id' => $this->company->id,
+        'active' => true,
+    ]);
+    Sanctum::actingAs($this->user, ['*']);
+});
+
 test('puede crear una nota de crédito básica', function () {
     // Preparar datos de prueba
-    $company = Company::factory()->create();
-    $branch = Branch::factory()->create(['company_id' => $company->id]);
-    $client = Client::factory()->create();
+    Client::factory()->create(['company_id' => $this->company->id]);
 
     $data = [
-        'company_id' => $company->id,
-        'branch_id' => $branch->id,
+        'company_id' => $this->company->id,
+        'branch_id' => $this->branch->id,
         'serie' => 'FC01',
         'fecha_emision' => '2025-09-06',
         'moneda' => 'PEN',
@@ -59,13 +69,11 @@ test('puede crear una nota de crédito básica', function () {
 });
 
 test('puede crear una nota de crédito con forma de pago a crédito', function () {
-    $company = Company::factory()->create();
-    $branch = Branch::factory()->create(['company_id' => $company->id]);
-    $client = Client::factory()->create();
+    Client::factory()->create(['company_id' => $this->company->id]);
 
     $data = [
-        'company_id' => $company->id,
-        'branch_id' => $branch->id,
+        'company_id' => $this->company->id,
+        'branch_id' => $this->branch->id,
         'serie' => 'FC01',
         'fecha_emision' => '2025-09-06',
         'moneda' => 'PEN',
@@ -113,12 +121,9 @@ test('puede crear una nota de crédito con forma de pago a crédito', function (
 });
 
 test('puede crear una nota de crédito con guías relacionadas', function () {
-    $company = Company::factory()->create();
-    $branch = Branch::factory()->create(['company_id' => $company->id]);
-
     $data = [
-        'company_id' => $company->id,
-        'branch_id' => $branch->id,
+        'company_id' => $this->company->id,
+        'branch_id' => $this->branch->id,
         'serie' => 'FC01',
         'fecha_emision' => '2025-09-06',
         'moneda' => 'PEN',
@@ -161,12 +166,9 @@ test('puede crear una nota de crédito con guías relacionadas', function () {
 });
 
 test('valida motivos correctos de nota de crédito', function () {
-    $company = Company::factory()->create();
-    $branch = Branch::factory()->create(['company_id' => $company->id]);
-
     $data = [
-        'company_id' => $company->id,
-        'branch_id' => $branch->id,
+        'company_id' => $this->company->id,
+        'branch_id' => $this->branch->id,
         'serie' => 'FC01',
         'fecha_emision' => '2025-09-06',
         'moneda' => 'PEN',
@@ -217,23 +219,20 @@ test('puede obtener el catálogo de motivos', function () {
 });
 
 test('puede listar notas de crédito con filtros', function () {
-    $company = Company::factory()->create();
-    $branch = Branch::factory()->create(['company_id' => $company->id]);
-    
     // Crear algunas notas de crédito
     CreditNote::factory()->count(3)->create([
-        'company_id' => $company->id,
-        'branch_id' => $branch->id,
+        'company_id' => $this->company->id,
+        'branch_id' => $this->branch->id,
         'estado_sunat' => 'PENDIENTE'
     ]);
     
     CreditNote::factory()->count(2)->create([
-        'company_id' => $company->id,
-        'branch_id' => $branch->id,
+        'company_id' => $this->company->id,
+        'branch_id' => $this->branch->id,
         'estado_sunat' => 'ACEPTADO'
     ]);
 
-    $response = $this->getJson("/api/v1/credit-notes?company_id={$company->id}&estado_sunat=PENDIENTE");
+    $response = $this->getJson("/api/v1/credit-notes?company_id={$this->company->id}&estado_sunat=PENDIENTE");
 
     $response->assertStatus(200)
             ->assertJson([

@@ -9,7 +9,13 @@ return new class extends Migration
 {
     public function up(): void
     {
-        // Cambiar enum a string para permitir 'species' sin alterar enum en MySQL
+        // Cambiar enum a string para permitir 'species' sin alterar enum en MySQL.
+        // En SQLite (testing) no existe MODIFY COLUMN; además SQLite no aplica enums reales.
+        $driver = DB::getDriverName();
+        if ($driver === 'sqlite') {
+            return;
+        }
+
         if (Schema::hasTable('pet_configurations') && Schema::hasColumn('pet_configurations', 'type')) {
             DB::statement("ALTER TABLE pet_configurations MODIFY COLUMN type VARCHAR(50) NOT NULL");
         }
@@ -17,6 +23,11 @@ return new class extends Migration
 
     public function down(): void
     {
+        $driver = DB::getDriverName();
+        if ($driver === 'sqlite') {
+            return;
+        }
+
         if (Schema::hasTable('pet_configurations') && Schema::hasColumn('pet_configurations', 'type')) {
             DB::statement("ALTER TABLE pet_configurations MODIFY COLUMN type ENUM('dog_breed', 'cat_breed', 'temperament', 'behavior') NOT NULL");
         }

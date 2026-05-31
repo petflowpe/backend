@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Http\Traits\RespondsWithPagination;
+use App\Helpers\ScopeHelper;
 use App\Models\Client;
 use App\Models\Company;
 use App\Models\Pet;
@@ -25,9 +26,9 @@ class ClientController extends Controller
         try {
             $query = Client::with(['company:id,ruc,razon_social']);
 
-            // Filtrar por empresa si se proporciona
-            if ($request->has('company_id')) {
-                $query->where('company_id', $request->company_id);
+            $companyId = ScopeHelper::companyId($request) ?? $request->get('company_id');
+            if ($companyId !== null) {
+                $query->where('company_id', $companyId);
             }
 
             // Filtrar por tipo de documento
@@ -273,6 +274,7 @@ class ClientController extends Controller
      */
     public function show(Client $client): JsonResponse
     {
+        $this->authorize('view', $client);
         try {
             $client->load(['company:id,ruc,razon_social,nombre_comercial']);
 
@@ -299,6 +301,7 @@ class ClientController extends Controller
      */
     public function update(Request $request, Client $client): JsonResponse
     {
+        $this->authorize('update', $client);
         try {
             $validator = Validator::make($request->all(), [
                 'company_id' => 'nullable|integer|exists:companies,id',
@@ -416,6 +419,7 @@ class ClientController extends Controller
      */
     public function destroy(Client $client): JsonResponse
     {
+        $this->authorize('delete', $client);
         try {
             // Verificar si el cliente tiene documentos asociados
             $hasDocuments = false; // Podrías implementar estas verificaciones si es necesario

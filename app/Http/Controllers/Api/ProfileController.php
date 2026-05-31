@@ -36,6 +36,7 @@ class ProfileController extends Controller
                 'role_display' => $user->role?->display_name,
                 'company_id' => $user->company_id,
                 'company' => $user->company?->razon_social,
+                'locale' => $user->locale ?? config('app.locale', 'es'),
                 'avatar_url' => $avatarUrl,
                 'phone' => $metadata['phone'] ?? null,
                 'position' => $metadata['position'] ?? null,
@@ -56,6 +57,7 @@ class ProfileController extends Controller
         $validated = $request->validate([
             'name' => 'sometimes|string|max:255',
             'email' => 'sometimes|email|max:255|unique:users,email,' . $user->id,
+            'locale' => 'sometimes|string|in:es,en,pt_BR',
             'current_password' => 'required_with:password',
             'password' => ['sometimes', 'nullable', Password::min(8)->letters()->mixedCase()->numbers()],
             'phone' => 'nullable|string|max:50',
@@ -80,6 +82,9 @@ class ProfileController extends Controller
         }
         if (isset($validated['email'])) {
             $user->email = $validated['email'];
+        }
+        if (isset($validated['locale'])) {
+            $user->locale = $validated['locale'];
         }
 
         $metadata = $user->metadata ?? [];
@@ -113,6 +118,7 @@ class ProfileController extends Controller
                 'id' => $user->id,
                 'name' => $user->name,
                 'email' => $user->email,
+                'locale' => $user->locale ?? config('app.locale', 'es'),
                 'avatar_url' => $avatarUrl,
                 'phone' => $metadata['phone'] ?? null,
                 'position' => $metadata['position'] ?? null,

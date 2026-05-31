@@ -53,7 +53,8 @@ class CompanyConfigController extends Controller
                 'tax_settings',
                 'invoice_settings',
                 'gre_settings',
-                'document_settings'
+                'document_settings',
+                'calendar_settings',
             ];
             
             if (!in_array($section, $validSections)) {
@@ -65,7 +66,9 @@ class CompanyConfigController extends Controller
             }
             
             $company = Company::findOrFail($companyId);
-            $config = $company->getConfig($section, null, null, []);
+            $config = $section === 'calendar_settings'
+                ? $company->getCalendarConfig()
+                : $company->getConfig($section, null, null, []);
             
             return response()->json([
                 'success' => true,
@@ -94,7 +97,8 @@ class CompanyConfigController extends Controller
                 'tax_settings',
                 'invoice_settings',
                 'gre_settings',
-                'document_settings'
+                'document_settings',
+                'calendar_settings',
             ];
             
             if (!in_array($section, $validSections)) {
@@ -108,13 +112,43 @@ class CompanyConfigController extends Controller
             $company = Company::findOrFail($companyId);
             
             // Validar datos de entrada según la sección
-            $validatedData = $this->validateSectionData($request, $section);
+            $validatedData = $section === 'calendar_settings'
+                ? $request->validate([
+                    'show_weekends' => 'sometimes|boolean',
+                    'interval_minutes' => 'sometimes|integer|in:5,10,15,30,60',
+                    'first_day_of_week' => 'sometimes|integer|min:0|max:6',
+                    'first_hour' => 'sometimes|integer|min:0|max:23',
+                    'last_hour' => 'sometimes|integer|min:0|max:23',
+                    'show_day_view_option' => 'sometimes|boolean',
+                    'day_view_first_hour' => 'sometimes|integer|min:0|max:23',
+                    'day_view_last_hour' => 'sometimes|integer|min:0|max:23',
+                    'default_view_current_day' => 'sometimes|boolean',
+                    'allow_booking_outside_hours' => 'sometimes|boolean',
+                    'worked_hours_per_day' => 'sometimes|integer|min:1|max:24',
+                    'daily_plan_enabled' => 'sometimes|boolean',
+                    'internal_reservations_enabled' => 'sometimes|boolean',
+                    'client_labels_enabled' => 'sometimes|boolean',
+                    'create_task_unpaid_invoices' => 'sometimes|boolean',
+                    'show_schedules_shift_types' => 'sometimes|boolean',
+                    'change_colors_by_status_reason' => 'sometimes|boolean',
+                    'show_only_national_holidays' => 'sometimes|boolean',
+                    'warn_if_no_visit_reason' => 'sometimes|boolean',
+                ])
+                : $this->validateSectionData($request, $section);
             
+            // Para calendar_settings, fusionar con la config actual para no perder claves no enviadas
+            $dataToSave = $validatedData;
+            if ($section === 'calendar_settings' && !empty($validatedData)) {
+                $dataToSave = array_merge($company->getCalendarConfig(), $validatedData);
+            }
+
             // Actualizar configuración
-            $updated = $this->configService->updateConfiguration($company, $section, $validatedData);
+            $updated = $this->configService->updateConfiguration($company, $section, $dataToSave);
             
             if ($updated) {
-                $newConfig = $company->fresh()->getConfig($section, null, null, []);
+                $newConfig = $section === 'calendar_settings'
+                    ? $company->fresh()->getCalendarConfig()
+                    : $company->fresh()->getConfig($section, null, null, []);
                 
                 return response()->json([
                     'success' => true,
