@@ -383,7 +383,7 @@ class SetupController extends Controller
      */
     private function createMainBranch(Company $company): Branch
     {
-        return Branch::updateOrCreate(
+        return Branch::firstOrCreate(
             [
                 'company_id' => $company->id,
                 'codigo' => '0000'

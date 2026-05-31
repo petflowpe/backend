@@ -130,6 +130,12 @@ class RolesAndPermissionsSeeder extends Seeder
     {
         $this->logInfo('Creando usuarios por defecto...');
 
+        // Limpiar usuarios demo de seeders antiguos para que el modulo de usuarios arranque sin datos de prueba.
+        User::whereIn('email', [
+            'company@sunatapi.com',
+            'api@sunatapi.com',
+        ])->delete();
+
         // Super Admin
         $superAdminRole = Role::where('name', 'super_admin')->first();
         
@@ -145,53 +151,9 @@ class RolesAndPermissionsSeeder extends Seeder
             ]
         );
 
-        // Usuario de prueba para company admin
-        $companyAdminRole = Role::where('name', 'company_admin')->first();
-        
-        User::updateOrCreate(
-            ['email' => 'company@sunatapi.com'],
-            [
-                'name' => 'Administrador de Empresa',
-                'password' => Hash::make('company123456'),
-                'role_id' => $companyAdminRole->id,
-                'company_id' => 1, // Asumiendo que existe empresa con ID 1
-                'user_type' => 'user',
-                'active' => true,
-                'email_verified_at' => now(),
-            ]
-        );
-
-        // Usuario API de prueba
-        $apiClientRole = Role::where('name', 'api_client')->first();
-        
-        $apiUser = User::updateOrCreate(
-            ['email' => 'api@sunatapi.com'],
-            [
-                'name' => 'Cliente API',
-                'password' => Hash::make('api123456'),
-                'role_id' => $apiClientRole->id,
-                'company_id' => 1,
-                'user_type' => 'api_client',
-                'active' => true,
-                'email_verified_at' => now(),
-            ]
-        );
-
-        // Crear token API de prueba
-        $token = $apiUser->createApiToken('API Token', [
-            'invoices.create',
-            'invoices.view',
-            'boletas.create',
-            'boletas.view',
-        ]);
-
         $this->logInfo('Usuarios creados exitosamente');
         $this->logWarning('CREDENCIALES DE ACCESO:');
         $this->logInfo('Super Admin: admin@sunatapi.com / admin123456');
-        $this->logInfo('Company Admin: company@sunatapi.com / company123456');
-        $this->logInfo('API Client: api@sunatapi.com / api123456');
-        $this->logWarning('TOKEN API DE PRUEBA:');
-        $this->logInfo($token->plainTextToken);
         $this->logError('⚠️  CAMBIAR ESTAS CREDENCIALES EN PRODUCCIÓN ⚠️');
     }
 

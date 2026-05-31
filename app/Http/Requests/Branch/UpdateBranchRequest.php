@@ -14,8 +14,6 @@ class UpdateBranchRequest extends FormRequest
 
     public function rules(): array
     {
-        $branchId = $this->route('branch');
-
         return [
             'company_id' => 'sometimes|integer|exists:companies,id',
             'codigo' => 'sometimes|string|max:10',
@@ -42,7 +40,9 @@ class UpdateBranchRequest extends FormRequest
         $validator->after(function ($validator) {
             // Validar que el código sea único por empresa (excluyendo la sucursal actual)
             if ($this->has('codigo') && $this->has('company_id')) {
-                $branchId = $this->route('branch');
+                $branchId = $this->route('branch') instanceof Branch
+                    ? $this->route('branch')->id
+                    : $this->route('branch');
                 $exists = Branch::where('company_id', $this->input('company_id'))
                                           ->where('codigo', $this->input('codigo'))
                                           ->where('id', '!=', $branchId)
@@ -55,8 +55,9 @@ class UpdateBranchRequest extends FormRequest
 
             // Si se está cambiando de empresa, validar que la nueva empresa existe
             if ($this->has('company_id')) {
-                $branchId = $this->route('branch');
-                $branch = \App\Models\Branch::find($branchId);
+                $branch = $this->route('branch') instanceof Branch
+                    ? $this->route('branch')
+                    : Branch::find($this->route('branch'));
                 
                 if ($branch && $branch->company_id != $this->input('company_id')) {
                     // Verificar si hay documentos asociados que impidan el cambio

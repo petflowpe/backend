@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\User;
 use App\Models\Role;
+use App\Models\Branch;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
@@ -21,7 +22,7 @@ class UserController extends Controller
     {
         try {
             $query = User::with(['role:id,name,display_name'])
-                ->select(['id', 'name', 'email', 'role_id', 'company_id', 'active', 'last_login_at', 'created_at']);
+                ->select(['id', 'name', 'email', 'role_id', 'company_id', 'active', 'last_login_at', 'created_at', 'metadata']);
 
             if ($request->filled('company_id')) {
                 $query->where('company_id', $request->company_id);
@@ -108,6 +109,11 @@ class UserController extends Controller
             'active' => 'nullable|boolean',
             'permissions' => 'nullable|array',
             'permissions.*' => 'string|max:100',
+            'phone' => 'nullable|string|max:40',
+            'initials' => 'nullable|string|max:20',
+            'all_branches_access' => 'nullable|boolean',
+            'branch_ids' => 'nullable|array',
+            'branch_ids.*' => 'integer|exists:branches,id',
         ]);
 
         try {
@@ -117,6 +123,29 @@ class UserController extends Controller
                     'success' => false,
                     'message' => 'No tiene permiso para crear usuarios',
                 ], 403);
+            }
+
+            $newCompanyId = (int) ($request->input('company_id') ?? $authUser->company_id);
+            $allowedBranchIds = $newCompanyId > 0
+                ? Branch::where('company_id', $newCompanyId)->where('activo', true)->pluck('id')->all()
+                : [];
+
+            $meta = [];
+            if ($request->filled('phone')) {
+                $meta['phone'] = $request->string('phone')->toString();
+            }
+            if ($request->filled('initials')) {
+                $meta['initials'] = trim($request->string('initials')->toString());
+            }
+            $allAccess = $request->boolean('all_branches_access', true);
+            if ($request->has('all_branches_access')) {
+                $meta['all_branches_access'] = $allAccess;
+            }
+            if (!$allAccess) {
+                $picked = array_map('intval', $request->input('branch_ids', []));
+                $meta['branch_ids'] = array_values(array_unique(array_intersect($picked, $allowedBranchIds)));
+            } else {
+                unset($meta['branch_ids']);
             }
 
             $user = User::create([
@@ -129,6 +158,7 @@ class UserController extends Controller
                 'active' => $request->boolean('active', true),
                 'permissions' => $request->permissions,
                 'password_changed_at' => now(),
+                'metadata' => $meta,
             ]);
 
             return response()->json([
@@ -169,6 +199,11 @@ class UserController extends Controller
             'active' => 'sometimes|boolean',
             'permissions' => 'nullable|array',
             'permissions.*' => 'string|max:100',
+            'phone' => 'nullable|string|max:40',
+            'initials' => 'nullable|string|max:20',
+            'all_branches_access' => 'nullable|boolean',
+            'branch_ids' => 'nullable|array',
+            'branch_ids.*' => 'integer|exists:branches,id',
         ]);
 
         try {
@@ -201,6 +236,40 @@ class UserController extends Controller
             }
             if ($request->has('permissions')) {
                 $user->permissions = $request->permissions;
+            }
+            if ($request->has('phone') || $request->has('initials') || $request->has('all_branches_access') || $request->has('branch_ids')) {
+                $meta = $user->metadata ?? [];
+                if ($request->has('phone')) {
+                    $phone = $request->input('phone');
+                    if ($phone === null || $phone === '') {
+                        unset($meta['phone']);
+                    } else {
+                        $meta['phone'] = $phone;
+                    }
+                }
+                if ($request->has('initials')) {
+                    $initials = $request->input('initials');
+                    if ($initials === null || trim((string) $initials) === '') {
+                        unset($meta['initials']);
+                    } else {
+                        $meta['initials'] = trim((string) $initials);
+                    }
+                }
+                if ($request->has('all_branches_access')) {
+                    $meta['all_branches_access'] = $request->boolean('all_branches_access');
+                }
+                $companyIdForBranches = (int) ($user->company_id ?? 0);
+                $allowedBranchIds = $companyIdForBranches > 0
+                    ? Branch::where('company_id', $companyIdForBranches)->where('activo', true)->pluck('id')->all()
+                    : [];
+                $allAccess = (bool) ($meta['all_branches_access'] ?? ($user->metadata['all_branches_access'] ?? true));
+                if ($allAccess) {
+                    unset($meta['branch_ids']);
+                } elseif ($request->has('branch_ids')) {
+                    $picked = array_map('intval', $request->input('branch_ids', []));
+                    $meta['branch_ids'] = array_values(array_unique(array_intersect($picked, $allowedBranchIds)));
+                }
+                $user->metadata = $meta;
             }
             $user->save();
 
@@ -298,6 +367,14 @@ class UserController extends Controller
             'role_display' => $user->role?->display_name,
             'company_id' => $user->company_id,
             'active' => $user->active,
+            'phone' => $meta['phone'] ?? null,
+            'initials' => $meta['initials'] ?? null,
+            'all_branches_access' => array_key_exists('all_branches_access', $meta)
+                ? (bool) $meta['all_branches_access']
+                : null,
+            'branch_ids' => isset($meta['branch_ids']) && is_array($meta['branch_ids'])
+                ? array_values(array_map('intval', $meta['branch_ids']))
+                : null,
             'last_login_at' => $user->last_login_at?->toIso8601String(),
             'created_at' => $user->created_at?->toIso8601String(),
         ];
@@ -305,7 +382,6 @@ class UserController extends Controller
             $base['user_type'] = $user->user_type;
             $base['permissions'] = $user->permissions ?? [];
             $base['company'] = $user->company?->razon_social ?? null;
-            $base['phone'] = $meta['phone'] ?? null;
             $base['updated_at'] = $user->updated_at?->toIso8601String();
         }
         return $base;

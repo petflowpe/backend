@@ -101,7 +101,11 @@ Route::prefix('v1')->middleware('auth:sanctum')->group(function () {
 
     // Roles y permisos (lectura)
     Route::get('/roles', [RoleController::class, 'index']);
+    Route::post('/roles', [RoleController::class, 'store']);
     Route::get('/roles/{id}', [RoleController::class, 'show']);
+    Route::put('/roles/{id}', [RoleController::class, 'update']);
+    Route::patch('/roles/{id}/toggle', [RoleController::class, 'toggle']);
+    Route::delete('/roles/{id}', [RoleController::class, 'destroy']);
     Route::get('/permissions', [PermissionController::class, 'index']);
 
     // ========================

@@ -3,6 +3,16 @@
 
 define('LARAVEL_START', microtime(true));
 
+// Monorepo guard: este proyecto usa el Laravel ubicado en /backend.
+// Si alguien ejecuta "php artisan ..." desde la raíz por error,
+// redirigimos al artisan real para evitar levantar dos backends distintos.
+$backendArtisan = __DIR__ . '/backend/artisan';
+if (is_file($backendArtisan)) {
+    chdir(__DIR__ . '/backend');
+    require $backendArtisan;
+    exit(0);
+}
+
 // Register the Composer autoloader...
 require __DIR__.'/vendor/autoload.php';
 
