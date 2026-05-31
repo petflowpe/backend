@@ -39,6 +39,11 @@ class Vehicle extends Model
         'fecha_itv',
         'equipamiento',
         'notas_mantenimiento',
+        'ultimo_cumplimiento_inspeccion',
+        'fecha_ultima_inspeccion',
+        'indice_chofer',
+        'puntos_observacion_chofer',
+        'observaciones_inspeccion_acumuladas',
         'current_latitude',
         'current_longitude',
         'last_location_update',
@@ -54,6 +59,10 @@ class Vehicle extends Model
         'fecha_proximo_mantenimiento' => 'date',
         'fecha_seguro' => 'date',
         'fecha_itv' => 'date',
+        'ultimo_cumplimiento_inspeccion' => 'decimal:1',
+        'fecha_ultima_inspeccion' => 'datetime',
+        'indice_chofer' => 'integer',
+        'puntos_observacion_chofer' => 'integer',
         'current_latitude' => 'decimal:8',
         'current_longitude' => 'decimal:8',
         'last_location_update' => 'datetime',
@@ -92,6 +101,11 @@ class Vehicle extends Model
     public function services(): HasMany
     {
         return $this->hasMany(VehicleService::class, 'vehicle_id');
+    }
+
+    public function inspections(): HasMany
+    {
+        return $this->hasMany(VehicleInspection::class, 'vehicle_id');
     }
 
     public function scopeActive($query)

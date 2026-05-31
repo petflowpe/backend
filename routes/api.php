@@ -38,6 +38,7 @@ use App\Http\Controllers\Api\PetController;
 use App\Http\Controllers\Api\AppointmentController;
 use App\Http\Controllers\Api\VehicleController;
 use App\Http\Controllers\Api\VehicleConfigurationController;
+use App\Http\Controllers\Api\VehicleInspectionController;
 use App\Http\Controllers\Api\MedicalRecordController;
 use App\Http\Controllers\Api\PetConfigurationController;
 use App\Http\Controllers\Api\NotificationController;
@@ -499,6 +500,16 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'throttle:api', EnsureUserCompa
     // Configuraciones de Vehículos (Marcas, Modelos, Tipos de Mantenimiento, Talleres)
     Route::get('/vehicle-configurations/all', [VehicleConfigurationController::class, 'getAll']);
     Route::post('/vehicle-configurations', [VehicleConfigurationController::class, 'store']);
+
+    // Alertas e inspecciones de flota
+    Route::get('/vehicle-alerts', [VehicleController::class, 'alerts']);
+    Route::get('/vehicle-inspection-templates', [VehicleInspectionController::class, 'templates']);
+    Route::post('/vehicle-inspection-templates', [VehicleInspectionController::class, 'storeTemplate']);
+    Route::post('/vehicle-inspection-templates/restore', [VehicleInspectionController::class, 'restoreTemplate']);
+    Route::get('/vehicle-inspections', [VehicleInspectionController::class, 'list']);
+    Route::get('/vehicle-inspections/{vehicleInspection}', [VehicleInspectionController::class, 'show']);
+    Route::delete('/vehicle-inspections/{vehicleInspection}', [VehicleInspectionController::class, 'destroy']);
+    Route::post('/vehicles/{vehicle}/inspections', [VehicleInspectionController::class, 'store']);
 
     // Vehículos: Mantenimientos / Gastos / Servicios programados
     Route::get('/vehicle-maintenances', [\App\Http\Controllers\Api\VehicleMaintenanceController::class, 'list']);

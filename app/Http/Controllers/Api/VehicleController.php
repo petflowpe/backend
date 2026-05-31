@@ -4,12 +4,15 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Helpers\ScopeHelper;
+use App\Models\VehicleInspection;
 use App\Models\VehicleMaintenance;
+use App\Models\VehicleService;
 use App\Models\Vehicle;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Carbon;
 use Exception;
 
 class VehicleController extends Controller
@@ -217,6 +220,7 @@ class VehicleController extends Controller
                 'status_override' => 'nullable|string|in:active,maintenance,out_of_service',
                 'horario_disponibilidad' => 'nullable|array',
                 'equipamiento' => 'nullable|array',
+                'notas_mantenimiento' => 'nullable|string',
                 'current_latitude' => 'nullable|numeric',
                 'current_longitude' => 'nullable|numeric',
                 'fecha_ultimo_mantenimiento' => 'nullable|date',
@@ -283,6 +287,110 @@ class VehicleController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Error al eliminar vehículo'
+            ], 500);
+        }
+    }
+
+    public function alerts(Request $request): JsonResponse
+    {
+        try {
+            $companyId = ScopeHelper::companyId($request);
+            $today = Carbon::today();
+            $soonLimit = $today->copy()->addDays(15);
+            $items = collect();
+
+            $vehicles = Vehicle::query()
+                ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
+                ->get();
+
+            foreach ($vehicles as $vehicle) {
+                foreach ([
+                    ['field' => 'fecha_seguro', 'label' => 'Seguro vehicular'],
+                    ['field' => 'fecha_itv', 'label' => 'ITV / revisión técnica'],
+                    ['field' => 'fecha_proximo_mantenimiento', 'label' => 'Mantenimiento programado'],
+                ] as $doc) {
+                    $date = $vehicle->{$doc['field']};
+                    if (! $date) {
+                        continue;
+                    }
+                    $due = Carbon::parse($date)->startOfDay();
+                    if ($due->lte($soonLimit)) {
+                        $days = $today->diffInDays($due, false);
+                        $items->push([
+                            'id' => 'vehicle-' . $vehicle->id . '-' . $doc['field'],
+                            'type' => $days < 0 ? 'expired' : 'upcoming',
+                            'severity' => $days < 0 ? 'critical' : ($days <= 7 ? 'high' : 'medium'),
+                            'vehicle_id' => $vehicle->id,
+                            'vehicle_name' => $vehicle->name,
+                            'title' => $doc['label'],
+                            'description' => $days < 0
+                                ? 'Vencido hace ' . abs($days) . ' días'
+                                : ($days === 0 ? 'Vence hoy' : 'Vence en ' . $days . ' días'),
+                            'due_date' => $due->toDateString(),
+                        ]);
+                    }
+                }
+            }
+
+            VehicleService::query()
+                ->with('vehicle:id,name')
+                ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
+                ->where('status', 'pending')
+                ->whereDate('due_date', '<=', $soonLimit->toDateString())
+                ->get()
+                ->each(function (VehicleService $service) use ($items, $today) {
+                    $due = Carbon::parse($service->due_date)->startOfDay();
+                    $days = $today->diffInDays($due, false);
+                    $items->push([
+                        'id' => 'service-' . $service->id,
+                        'type' => 'service',
+                        'severity' => $days < 0 ? 'critical' : ($days <= 7 ? 'high' : 'medium'),
+                        'vehicle_id' => $service->vehicle_id,
+                        'vehicle_name' => $service->vehicle?->name,
+                        'title' => $service->type,
+                        'description' => $days < 0
+                            ? 'Servicio vencido hace ' . abs($days) . ' días'
+                            : ($days === 0 ? 'Servicio vence hoy' : 'Servicio en ' . $days . ' días'),
+                        'due_date' => $due->toDateString(),
+                    ]);
+                });
+
+            VehicleInspection::query()
+                ->with('vehicle:id,name')
+                ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
+                ->whereIn('status', ['attention_required', 'rejected'])
+                ->latest('inspected_at')
+                ->limit(50)
+                ->get()
+                ->each(function (VehicleInspection $inspection) use ($items) {
+                    $items->push([
+                        'id' => 'inspection-' . $inspection->id,
+                        'type' => 'inspection',
+                        'severity' => $inspection->status === 'rejected' ? 'critical' : 'high',
+                        'vehicle_id' => $inspection->vehicle_id,
+                        'vehicle_name' => $inspection->vehicle?->name,
+                        'title' => 'Inspección con observaciones',
+                        'description' => 'Cumplimiento ' . (float) $inspection->compliance_percent . '%',
+                        'due_date' => $inspection->inspected_at?->toDateString(),
+                    ]);
+                });
+
+            $sorted = $items
+                ->sortBy(fn ($item) => [
+                    ['critical' => 0, 'high' => 1, 'medium' => 2, 'low' => 3][$item['severity']] ?? 9,
+                    $item['due_date'] ?? '9999-12-31',
+                ])
+                ->values();
+
+            return response()->json([
+                'success' => true,
+                'data' => $sorted,
+            ]);
+        } catch (Exception $e) {
+            Log::error('Error al calcular alertas de flota', ['error' => $e->getMessage()]);
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al obtener alertas de flota: ' . $e->getMessage(),
             ], 500);
         }
     }

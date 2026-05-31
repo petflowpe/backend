@@ -130,6 +130,9 @@ class BranchController extends Controller
     {
         try {
             $validated = $request->validated();
+            if (array_key_exists('nombre', $validated)) {
+                $validated['nombre'] = trim((string) $validated['nombre']);
+            }
             
             // Verificar que la empresa nueva existe y está activa (si se está cambiando)
             if (isset($validated['company_id'])) {

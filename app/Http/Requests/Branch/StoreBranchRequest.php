@@ -12,6 +12,30 @@ class StoreBranchRequest extends FormRequest
         return true;
     }
 
+    protected function prepareForValidation(): void
+    {
+        // Alta rapida desde UI: relleno minimo valido si no vienen campos SUNAT/Ubigeo.
+        $merge = [];
+        if (!$this->filled('direccion')) {
+            $merge['direccion'] = '-';
+        }
+        if (!$this->filled('ubigeo')) {
+            $merge['ubigeo'] = '000000';
+        }
+        if (!$this->filled('distrito')) {
+            $merge['distrito'] = '-';
+        }
+        if (!$this->filled('provincia')) {
+            $merge['provincia'] = '-';
+        }
+        if (!$this->filled('departamento')) {
+            $merge['departamento'] = '-';
+        }
+        if ($merge !== []) {
+            $this->merge($merge);
+        }
+    }
+
     public function rules(): array
     {
         return [
