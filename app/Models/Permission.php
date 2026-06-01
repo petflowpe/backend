@@ -185,6 +185,25 @@ class Permission extends Model
                 'pets.config' => ['display_name' => 'Configurar Mascotas', 'description' => 'Gestionar especies, razas, temperamentos y comportamientos'],
             ],
 
+            // Productos e inventario
+            'products' => [
+                'products.view' => ['display_name' => 'Ver Productos', 'description' => 'Consultar catálogo e inventario'],
+                'products.create' => ['display_name' => 'Crear Productos', 'description' => 'Registrar productos en el catálogo'],
+                'products.update' => ['display_name' => 'Editar Productos', 'description' => 'Actualizar productos y precios'],
+                'products.delete' => ['display_name' => 'Desactivar Productos', 'description' => 'Desactivar productos del catálogo'],
+                'products.manage' => ['display_name' => 'Administrar Productos', 'description' => 'Gestión completa de catálogo e inventario'],
+                'inventory.adjust' => ['display_name' => 'Ajustar Inventario', 'description' => 'Entradas, salidas y ajustes de stock'],
+                'kardex.view' => ['display_name' => 'Ver Kardex', 'description' => 'Consultar movimientos de inventario'],
+            ],
+
+            // Vehículos y cobertura
+            'vehicles' => [
+                'vehicles.view' => ['display_name' => 'Ver Vehículos', 'description' => 'Ver flota y detalle de vehículos'],
+                'vehicles.manage' => ['display_name' => 'Administrar Vehículos', 'description' => 'Crear y editar vehículos de la flota'],
+                'vehicles.coverage.view' => ['display_name' => 'Ver Cobertura de Vehículos', 'description' => 'Consultar reglas de cobertura por distrito y horario'],
+                'vehicles.coverage.manage' => ['display_name' => 'Gestionar Cobertura de Vehículos', 'description' => 'Crear y editar reglas de cobertura por distrito y horario'],
+            ],
+
             // Historial médico
             'medical_records' => [
                 'medical_records.view' => ['display_name' => 'Ver Historial Médico', 'description' => 'Consultar registros médicos'],

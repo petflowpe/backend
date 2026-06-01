@@ -39,6 +39,7 @@ use App\Http\Controllers\Api\AppointmentController;
 use App\Http\Controllers\Api\VehicleController;
 use App\Http\Controllers\Api\VehicleConfigurationController;
 use App\Http\Controllers\Api\VehicleInspectionController;
+use App\Http\Controllers\Api\VehicleCoverageRuleController;
 use App\Http\Controllers\Api\MedicalRecordController;
 use App\Http\Controllers\Api\PetConfigurationController;
 use App\Http\Controllers\Api\NotificationController;
@@ -510,6 +511,13 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'throttle:api', EnsureUserCompa
     Route::get('/vehicle-inspections/{vehicleInspection}', [VehicleInspectionController::class, 'show']);
     Route::delete('/vehicle-inspections/{vehicleInspection}', [VehicleInspectionController::class, 'destroy']);
     Route::post('/vehicles/{vehicle}/inspections', [VehicleInspectionController::class, 'store']);
+
+    // Reglas de cobertura vehículo → distrito → día → hora
+    Route::get('/vehicle-coverage-rules/available-vehicles', [VehicleCoverageRuleController::class, 'availableVehicles']);
+    Route::get('/vehicles/{vehicle}/coverage-rules', [VehicleCoverageRuleController::class, 'index']);
+    Route::post('/vehicles/{vehicle}/coverage-rules', [VehicleCoverageRuleController::class, 'store']);
+    Route::put('/vehicle-coverage-rules/{vehicleCoverageRule}', [VehicleCoverageRuleController::class, 'update']);
+    Route::delete('/vehicle-coverage-rules/{vehicleCoverageRule}', [VehicleCoverageRuleController::class, 'destroy']);
 
     // Vehículos: Mantenimientos / Gastos / Servicios programados
     Route::get('/vehicle-maintenances', [\App\Http\Controllers\Api\VehicleMaintenanceController::class, 'list']);
