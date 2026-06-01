@@ -50,6 +50,7 @@ class DemoDataSeeder extends Seeder
             CorrelativesSeeder::class,
             BrandsSeeder::class,
             SuppliersSeeder::class,
+            ProductsSeeder::class,
             ZonesSeeder::class,
             VehiclesSeeder::class,
             CompanyConfigSeeder::class,

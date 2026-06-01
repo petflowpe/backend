@@ -12,6 +12,7 @@ use App\Models\Product;
 use App\Models\Client;
 use App\Models\StockMovement;
 use App\Models\Vehicle;
+use App\Services\VehicleCoverageService;
 use Illuminate\Support\Str;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
@@ -169,33 +170,27 @@ class AppointmentController extends Controller
                 }
             }
 
-            // 2. Validar disponibilidad del vehículo (si se asigna vehículo)
+            // 2. Validar disponibilidad y cobertura del vehículo (si se asigna vehículo)
             if (!empty($data['vehicle_id'])) {
                 $vehicle = Vehicle::find($data['vehicle_id']);
-                if ($vehicle && !empty($vehicle->horario_disponibilidad) && is_array($vehicle->horario_disponibilidad)) {
-                    $dayOfWeek = strtolower($date->format('l'));
-                    $dayNamesEs = [
-                        'monday' => 'lunes', 'tuesday' => 'martes', 'wednesday' => 'miércoles',
-                        'thursday' => 'jueves', 'friday' => 'viernes', 'saturday' => 'sábado', 'sunday' => 'domingo',
-                    ];
-                    $dayLabel = $dayNamesEs[$dayOfWeek] ?? $dayOfWeek;
-                    $vehicleHours = $vehicle->horario_disponibilidad[$dayOfWeek] ?? null;
-                    if ($vehicleHours) {
-                        if (empty($vehicleHours['open'])) {
-                            return response()->json([
-                                'success' => false,
-                                'message' => "El vehículo \"{$vehicle->name}\" no está disponible los {$dayLabel}.",
-                            ], 422);
-                        }
-                        $appointmentTime = Carbon::createFromFormat('H:i', $data['time']);
-                        $startTime = Carbon::createFromFormat('H:i', $vehicleHours['start'] ?? '00:00');
-                        $endTime = Carbon::createFromFormat('H:i', $vehicleHours['end'] ?? '23:59');
-                        if ($appointmentTime->lt($startTime) || $appointmentTime->gt($endTime)) {
-                            return response()->json([
-                                'success' => false,
-                                'message' => "El vehículo \"{$vehicle->name}\" no está disponible a esa hora (disponible {$vehicleHours['start']} - {$vehicleHours['end']}).",
-                            ], 422);
-                        }
+                if ($vehicle) {
+                    $client = Client::find($data['client_id']);
+                    $district = $data['district'] ?? $client?->distrito;
+                    /** @var VehicleCoverageService $coverageService */
+                    $coverageService = app(VehicleCoverageService::class);
+                    $coverage = $coverageService->vehicleCoversAppointment(
+                        $vehicle,
+                        $client,
+                        $date,
+                        $data['time'],
+                        $district
+                    );
+
+                    if (!$coverage['covers']) {
+                        return response()->json([
+                            'success' => false,
+                            'message' => $coverage['message'] ?? 'El vehículo no está disponible para esta cita.',
+                        ], 422);
                     }
                 }
             }
@@ -396,6 +391,32 @@ class AppointmentController extends Controller
             }
 
             $data = $validator->validated();
+
+            // Validar cobertura si cambia vehículo, fecha u hora
+            $vehicleId = $data['vehicle_id'] ?? $appointment->vehicle_id;
+            $appointmentDate = isset($data['date']) ? Carbon::parse($data['date']) : Carbon::parse($appointment->date);
+            $appointmentTime = $data['time'] ?? $appointment->time;
+            if ($vehicleId) {
+                $vehicle = Vehicle::find($vehicleId);
+                if ($vehicle) {
+                    $client = $appointment->client ?? Client::find($appointment->client_id);
+                    /** @var VehicleCoverageService $coverageService */
+                    $coverageService = app(VehicleCoverageService::class);
+                    $coverage = $coverageService->vehicleCoversAppointment(
+                        $vehicle,
+                        $client,
+                        $appointmentDate,
+                        is_string($appointmentTime) ? substr($appointmentTime, 0, 5) : (string) $appointmentTime,
+                        $appointment->district ?? $client?->distrito
+                    );
+                    if (!$coverage['covers']) {
+                        return response()->json([
+                            'success' => false,
+                            'message' => $coverage['message'] ?? 'El vehículo no está disponible para esta cita.',
+                        ], 422);
+                    }
+                }
+            }
 
             // Actualizar timestamps según el estado
             if (isset($data['status'])) {

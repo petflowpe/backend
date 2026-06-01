@@ -108,6 +108,11 @@ class Vehicle extends Model
         return $this->hasMany(VehicleInspection::class, 'vehicle_id');
     }
 
+    public function coverageRules(): HasMany
+    {
+        return $this->hasMany(VehicleCoverageRule::class, 'vehicle_id');
+    }
+
     public function scopeActive($query)
     {
         return $query->where('activo', true);

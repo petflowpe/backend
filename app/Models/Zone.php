@@ -35,4 +35,9 @@ class Zone extends Model
     {
         return $this->hasMany(Route::class, 'zone_id');
     }
+
+    public function coverageRules(): HasMany
+    {
+        return $this->hasMany(VehicleCoverageRule::class, 'zone_id');
+    }
 }

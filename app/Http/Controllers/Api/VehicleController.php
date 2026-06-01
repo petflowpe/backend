@@ -179,7 +179,7 @@ class VehicleController extends Controller
     public function show($id): JsonResponse
     {
         try {
-            $vehicle = Vehicle::with(['company', 'appointments'])->findOrFail($id);
+            $vehicle = Vehicle::with(['company', 'appointments', 'coverageRules.zone'])->findOrFail($id);
 
             return response()->json([
                 'success' => true,

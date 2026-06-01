@@ -165,3 +165,34 @@ Artisan::command('pilot:setup
 
     return 0;
 })->purpose('Setup automático para piloto (migrate + seed + admin)');
+
+Artisan::command('vehicles:migrate-coverage-rules
+    {--company= : ID de empresa (opcional)}
+    {--vehicle= : ID de vehículo (opcional)}
+', function () {
+    /** @var \App\Services\VehicleCoverageService $service */
+    $service = app(\App\Services\VehicleCoverageService::class);
+
+    $query = \App\Models\Vehicle::query();
+    if ($this->option('company')) {
+        $query->where('company_id', (int) $this->option('company'));
+    }
+    if ($this->option('vehicle')) {
+        $query->where('id', (int) $this->option('vehicle'));
+    }
+
+    $vehicles = $query->get();
+    $totalRules = 0;
+
+    foreach ($vehicles as $vehicle) {
+        $created = $service->migrateVehicleFromLegacy($vehicle);
+        if ($created > 0) {
+            $this->line("Vehículo #{$vehicle->id} ({$vehicle->name}): {$created} regla(s) creada(s).");
+            $totalRules += $created;
+        }
+    }
+
+    $this->info("Migración completada. Reglas creadas: {$totalRules}");
+
+    return 0;
+})->purpose('Migrar zonas_asignadas y horario_disponibilidad a reglas de cobertura');
