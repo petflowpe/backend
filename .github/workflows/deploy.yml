@@ -1,58 +1,97 @@
-name: 🚀 Deploy VPS Hostinger (PRO)
+name: Deploy VPS Hostinger (PRO)
 
 on:
   push:
     branches:
       - main
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-backend-production
+  cancel-in-progress: true
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    env:
+      SSH_HOST: ${{ secrets.SSH_HOST }}
+      SSH_USER: ${{ secrets.SSH_USER }}
+      DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
 
     steps:
-      - name: 🔐 Configurar SSH
+      - name: Validar secrets requeridos
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+        run: |
+          missing=0
+          for name in SSH_HOST SSH_USER DEPLOY_PATH; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Falta el secret $name en GitHub (Settings > Secrets > Actions)"
+              missing=1
+            fi
+          done
+          if [ -z "$SSH_PRIVATE_KEY" ]; then
+            echo "::error::Falta el secret SSH_PRIVATE_KEY"
+            missing=1
+          fi
+          exit "$missing"
+
+      - name: Configurar SSH
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
         run: |
           mkdir -p ~/.ssh
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
+          chmod 700 ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -H ${{ secrets.SSH_HOST }} >> ~/.ssh/known_hosts
+          if ! ssh-keyscan -H -T 20 "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null; then
+            echo "::error::No se pudo resolver el host SSH ($SSH_HOST). Verifica SSH_HOST."
+            exit 1
+          fi
 
-      - name: 🚀 Deploy en VPS
+      - name: Deploy backend en VPS
+        env:
+          RUN_SEEDERS: ${{ secrets.RUN_SEEDERS_ON_DEPLOY }}
         run: |
           ssh -i ~/.ssh/deploy_key \
-              -o StrictHostKeyChecking=no \
-              ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} << 'EOF'
+            -o BatchMode=yes \
+            -o ConnectTimeout=30 \
+            -o StrictHostKeyChecking=no \
+            "$SSH_USER@$SSH_HOST" \
+            "DEPLOY_PATH='$DEPLOY_PATH' RUN_SEEDERS='${RUN_SEEDERS:-false}' bash -s" << 'REMOTE_SCRIPT'
+          set -euo pipefail
 
-          set -e
-          cd ${{ secrets.DEPLOY_PATH }}
+          cd "$DEPLOY_PATH"
 
-          echo "🔄 Actualizando código..."
-          git fetch origin
+          echo "Actualizando codigo backend..."
+          git fetch origin main
           git checkout main
           git reset --hard origin/main
-          git clean -fd
+          git clean -fd -e .env -e storage -e bootstrap/cache
 
-          echo "📦 Dependencias..."
-          composer install --no-dev --optimize-autoloader
+          echo "Instalando dependencias PHP..."
+          composer install --no-dev --optimize-autoloader --no-interaction
 
-          echo "🗄️ Migraciones..."
+          echo "Ejecutando migraciones..."
           php artisan migrate --force
 
-          echo "🌱 Seeders..."
-          php artisan db:seed --force
+          if [ "$RUN_SEEDERS" = "true" ]; then
+            echo "Ejecutando seeders (RUN_SEEDERS_ON_DEPLOY=true)..."
+            php artisan db:seed --force
+          else
+            echo "Seeders omitidos (solo en deploy inicial o manual)."
+          fi
 
-          echo "🧹 Limpiando cache..."
+          echo "Limpiando y optimizando cache..."
           php artisan config:clear
           php artisan route:clear
           php artisan view:clear
           php artisan cache:clear
-
-          echo "⚙️ Optimización..."
           php artisan optimize
 
-          echo "🔐 Permisos..."
-          chown -R www-data:www-data .
-          chmod -R 775 storage bootstrap/cache
+          echo "Ajustando permisos de storage..."
+          chmod -R ug+rwx storage bootstrap/cache 2>/dev/null || true
+          sudo chown -R "$USER":www-data storage bootstrap/cache 2>/dev/null || true
 
-          echo "✅ Deploy completado"
-          EOF
+          echo "Deploy backend completado"
+          REMOTE_SCRIPT
