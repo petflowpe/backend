@@ -36,6 +36,9 @@ jobs:
           fi
           exit "$missing"
 
+      - name: Checkout codigo
+        uses: actions/checkout@v4
+
       - name: Configurar SSH
         env:
           SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
@@ -49,7 +52,21 @@ jobs:
             exit 1
           fi
 
-      - name: Deploy backend en VPS
+      - name: Sincronizar codigo al VPS
+        run: |
+          rsync -az --delete \
+            --exclude .git \
+            --exclude .github \
+            --exclude .env \
+            --exclude storage/app \
+            --exclude storage/framework \
+            --exclude storage/logs \
+            --exclude node_modules \
+            --exclude tests \
+            -e "ssh -i ~/.ssh/deploy_key -o BatchMode=yes -o StrictHostKeyChecking=no" \
+            ./ "$SSH_USER@$SSH_HOST:$DEPLOY_PATH/"
+
+      - name: Post-deploy en VPS
         env:
           RUN_SEEDERS: ${{ secrets.RUN_SEEDERS_ON_DEPLOY }}
         run: |
@@ -62,12 +79,7 @@ jobs:
           set -euo pipefail
 
           cd "$DEPLOY_PATH"
-
-          echo "Actualizando codigo backend..."
-          git fetch origin main
-          git checkout main
-          git reset --hard origin/main
-          git clean -fd -e .env -e storage -e bootstrap/cache
+          set -x
 
           echo "Instalando dependencias PHP..."
           composer install --no-dev --optimize-autoloader --no-interaction
@@ -79,7 +91,7 @@ jobs:
             echo "Ejecutando seeders (RUN_SEEDERS_ON_DEPLOY=true)..."
             php artisan db:seed --force
           else
-            echo "Seeders omitidos (solo en deploy inicial o manual)."
+            echo "Seeders omitidos."
           fi
 
           echo "Limpiando y optimizando cache..."
@@ -90,8 +102,79 @@ jobs:
           php artisan optimize
 
           echo "Ajustando permisos de storage..."
+          mkdir -p storage/framework/cache storage/framework/sessions storage/framework/views storage/logs bootstrap/cache
           chmod -R ug+rwx storage bootstrap/cache 2>/dev/null || true
           sudo chown -R "$USER":www-data storage bootstrap/cache 2>/dev/null || true
 
           echo "Deploy backend completado"
           REMOTE_SCRIPT
+
+  deploy-frontend:
+    runs-on: ubuntu-latest
+    needs: deploy
+    if: success()
+    env:
+      SSH_HOST: ${{ secrets.SSH_HOST }}
+      SSH_USER: ${{ secrets.SSH_USER }}
+      DEPLOY_PATH: ${{ secrets.FRONTEND_DEPLOY_PATH }}
+
+    steps:
+      - name: Omitir si no hay ruta frontend
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+        run: |
+          if [ -z "$DEPLOY_PATH" ] || [ -z "$SSH_HOST" ] || [ -z "$SSH_USER" ] || [ -z "$SSH_PRIVATE_KEY" ]; then
+            echo "FRONTEND_DEPLOY_PATH no configurado en backend; omitiendo deploy frontend."
+            exit 0
+          fi
+          echo "DEPLOY_FRONTEND=1" >> "$GITHUB_ENV"
+
+      - name: Checkout frontend
+        if: env.DEPLOY_FRONTEND == '1'
+        uses: actions/checkout@v4
+        with:
+          repository: petflowpe/frontend
+          ref: main
+
+      - name: Configurar Node
+        if: env.DEPLOY_FRONTEND == '1'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Compilar SPA
+        if: env.DEPLOY_FRONTEND == '1'
+        env:
+          VITE_API_URL: ${{ secrets.VITE_API_URL }}
+          VITE_SENTRY_DSN: ${{ secrets.VITE_SENTRY_DSN }}
+        run: |
+          export VITE_API_URL="${VITE_API_URL:-https://api.petflow.com/api}"
+          npm ci
+          npm run build
+
+      - name: Configurar SSH
+        if: env.DEPLOY_FRONTEND == '1'
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H -T 20 "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Publicar build al VPS
+        if: env.DEPLOY_FRONTEND == '1'
+        run: |
+          ssh -i ~/.ssh/deploy_key \
+            -o BatchMode=yes \
+            -o StrictHostKeyChecking=no \
+            "$SSH_USER@$SSH_HOST" \
+            "mkdir -p '$DEPLOY_PATH'"
+
+          rsync -az --delete \
+            -e "ssh -i ~/.ssh/deploy_key -o BatchMode=yes -o StrictHostKeyChecking=no" \
+            build/ "$SSH_USER@$SSH_HOST:$DEPLOY_PATH/"
+
+          echo "Deploy frontend completado en $DEPLOY_PATH"
