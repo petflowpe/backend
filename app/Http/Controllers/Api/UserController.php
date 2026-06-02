@@ -2,31 +2,41 @@
 
 namespace App\Http\Controllers\Api;
 
+use App\Http\Controllers\Concerns\HandlesStaffAuthorization;
 use App\Http\Controllers\Controller;
-use App\Models\User;
-use App\Models\Role;
 use App\Models\Branch;
+use App\Models\Role;
+use App\Models\User;
+use Exception;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\Rules\Password;
-use Exception;
 
 class UserController extends Controller
 {
-    /**
-     * Listar usuarios (staff/empleados)
-     */
+    use HandlesStaffAuthorization;
+
     public function index(Request $request): JsonResponse
     {
         try {
+            $authUser = $request->user();
+            if (!$this->canListUsers($authUser)) {
+                return $this->denyStaff('No tiene permiso para listar usuarios');
+            }
+
             $query = User::with(['role:id,name,display_name'])
                 ->select(['id', 'name', 'email', 'role_id', 'company_id', 'active', 'last_login_at', 'created_at', 'metadata']);
 
-            if ($request->filled('company_id')) {
-                $query->where('company_id', $request->company_id);
+            $scopeCompanyId = $this->scopedCompanyId($request, $authUser);
+            if ($scopeCompanyId) {
+                $query->where('company_id', $scopeCompanyId);
+            } elseif (!$authUser->hasRole('super_admin')) {
+                return $this->denyStaff('No tiene empresa asignada para consultar usuarios');
             }
+
             if ($request->boolean('only_active', false)) {
                 $query->where('active', true);
             }
@@ -41,9 +51,7 @@ class UserController extends Controller
             $perPage = $request->integer('per_page', 20);
             $users = $query->orderBy('name')->paginate($perPage);
 
-            $data = $users->getCollection()->map(function (User $user) {
-                return $this->userToArray($user);
-            });
+            $data = $users->getCollection()->map(fn (User $user) => $this->userToArray($user));
 
             return response()->json([
                 'success' => true,
@@ -57,6 +65,7 @@ class UserController extends Controller
             ]);
         } catch (Exception $e) {
             Log::error('Error al listar usuarios', ['error' => $e->getMessage()]);
+
             return response()->json([
                 'success' => false,
                 'message' => 'Error al obtener usuarios',
@@ -65,38 +74,35 @@ class UserController extends Controller
         }
     }
 
-    /**
-     * Ver un usuario por ID
-     */
     public function show(int $id): JsonResponse
     {
         try {
             $user = User::with(['role', 'company'])->findOrFail($id);
 
             if (!$this->canAccessUser($user)) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'No tiene permiso para ver este usuario',
-                ], 403);
+                return $this->denyStaff('No tiene permiso para ver este usuario');
             }
 
             return response()->json([
                 'success' => true,
                 'data' => $this->userToArray($user, true),
             ]);
-        } catch (Exception $e) {
-            Log::error('Error al obtener usuario', ['id' => $id, 'error' => $e->getMessage()]);
+        } catch (ModelNotFoundException) {
             return response()->json([
                 'success' => false,
                 'message' => 'Usuario no encontrado',
-                'error' => config('app.debug') ? $e->getMessage() : null,
             ], 404);
+        } catch (Exception $e) {
+            Log::error('Error al obtener usuario', ['id' => $id, 'error' => $e->getMessage()]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al obtener usuario',
+                'error' => config('app.debug') ? $e->getMessage() : null,
+            ], 500);
         }
     }
 
-    /**
-     * Crear usuario
-     */
     public function store(Request $request): JsonResponse
     {
         $request->validate([
@@ -118,14 +124,19 @@ class UserController extends Controller
 
         try {
             $authUser = $request->user();
-            if (!$authUser->hasPermission('users.create') && !$authUser->hasRole('super_admin')) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'No tiene permiso para crear usuarios',
-                ], 403);
+            if (!$this->canCreateUsers($authUser)) {
+                return $this->denyStaff('No tiene permiso para crear usuarios');
+            }
+
+            if ($response = $this->assertAssignableRole($authUser, (int) $request->role_id)) {
+                return $response;
             }
 
             $newCompanyId = (int) ($request->input('company_id') ?? $authUser->company_id);
+            if (!$authUser->hasRole('super_admin') && $authUser->company_id && $newCompanyId !== (int) $authUser->company_id) {
+                return $this->denyStaff('No puede crear usuarios en otra empresa');
+            }
+
             $allowedBranchIds = $newCompanyId > 0
                 ? Branch::where('company_id', $newCompanyId)->where('activo', true)->pluck('id')->all()
                 : [];
@@ -141,22 +152,32 @@ class UserController extends Controller
             if ($request->has('all_branches_access')) {
                 $meta['all_branches_access'] = $allAccess;
             }
+            $pickedBranchIds = [];
             if (!$allAccess) {
-                $picked = array_map('intval', $request->input('branch_ids', []));
-                $meta['branch_ids'] = array_values(array_unique(array_intersect($picked, $allowedBranchIds)));
+                $pickedBranchIds = array_values(array_unique(array_intersect(
+                    array_map('intval', $request->input('branch_ids', [])),
+                    $allowedBranchIds
+                )));
+                $meta['branch_ids'] = $pickedBranchIds;
             } else {
                 unset($meta['branch_ids']);
             }
 
+            if ($response = $this->assertBranchSelection($newCompanyId, $allAccess, $pickedBranchIds)) {
+                return $response;
+            }
+
+            $permissions = $this->normalizeUserPermissions($request->input('permissions'));
+
             $user = User::create([
                 'name' => $request->name,
                 'email' => $request->email,
-                'password' => Hash::make($request->password),
+                'password' => $request->password,
                 'role_id' => $request->role_id,
-                'company_id' => $request->company_id ?? $authUser->company_id,
+                'company_id' => $newCompanyId ?: null,
                 'user_type' => $request->user_type ?? 'user',
                 'active' => $request->boolean('active', true),
-                'permissions' => $request->permissions,
+                'permissions' => $permissions,
                 'password_changed_at' => now(),
                 'metadata' => $meta,
             ]);
@@ -168,6 +189,7 @@ class UserController extends Controller
             ], 201);
         } catch (Exception $e) {
             Log::error('Error al crear usuario', ['error' => $e->getMessage()]);
+
             return response()->json([
                 'success' => false,
                 'message' => 'Error al crear usuario',
@@ -176,18 +198,19 @@ class UserController extends Controller
         }
     }
 
-    /**
-     * Actualizar usuario
-     */
     public function update(Request $request, int $id): JsonResponse
     {
-        $user = User::with('role')->findOrFail($id);
-
-        if (!$this->canAccessUser($user)) {
+        try {
+            $user = User::with('role')->findOrFail($id);
+        } catch (ModelNotFoundException) {
             return response()->json([
                 'success' => false,
-                'message' => 'No tiene permiso para editar este usuario',
-            ], 403);
+                'message' => 'Usuario no encontrado',
+            ], 404);
+        }
+
+        if (!$this->canAccessUser($user)) {
+            return $this->denyStaff('No tiene permiso para editar este usuario');
         }
 
         $request->validate([
@@ -208,11 +231,20 @@ class UserController extends Controller
 
         try {
             $authUser = $request->user();
-            if (!$authUser->hasPermission('users.update') && !$authUser->hasRole('super_admin')) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'No tiene permiso para editar usuarios',
-                ], 403);
+            if (!$this->canUpdateUsers($authUser)) {
+                return $this->denyStaff('No tiene permiso para editar usuarios');
+            }
+
+            if ($request->has('role_id')) {
+                if ($response = $this->assertAssignableRole($authUser, (int) $request->role_id)) {
+                    return $response;
+                }
+            }
+
+            if ($request->has('company_id') && !$authUser->hasRole('super_admin')) {
+                if ((int) $request->company_id !== (int) $authUser->company_id) {
+                    return $this->denyStaff('No puede mover usuarios a otra empresa');
+                }
             }
 
             if ($request->filled('name')) {
@@ -222,21 +254,28 @@ class UserController extends Controller
                 $user->email = $request->email;
             }
             if ($request->filled('password')) {
-                $user->password = Hash::make($request->password);
+                $user->password = $request->password;
                 $user->password_changed_at = now();
             }
             if ($request->has('role_id')) {
                 $user->role_id = $request->role_id;
             }
-            if ($request->has('company_id')) {
+            if ($request->has('company_id') && $authUser->hasRole('super_admin')) {
                 $user->company_id = $request->company_id;
             }
             if ($request->has('active')) {
+                if ($user->id === $authUser->id && !$request->boolean('active')) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'No puede desactivar su propia cuenta',
+                    ], 422);
+                }
                 $user->active = $request->boolean('active');
             }
             if ($request->has('permissions')) {
-                $user->permissions = $request->permissions;
+                $user->permissions = $this->normalizeUserPermissions($request->input('permissions'));
             }
+
             if ($request->has('phone') || $request->has('initials') || $request->has('all_branches_access') || $request->has('branch_ids')) {
                 $meta = $user->metadata ?? [];
                 if ($request->has('phone')) {
@@ -263,14 +302,26 @@ class UserController extends Controller
                     ? Branch::where('company_id', $companyIdForBranches)->where('activo', true)->pluck('id')->all()
                     : [];
                 $allAccess = (bool) ($meta['all_branches_access'] ?? ($user->metadata['all_branches_access'] ?? true));
+                $pickedBranchIds = [];
                 if ($allAccess) {
                     unset($meta['branch_ids']);
                 } elseif ($request->has('branch_ids')) {
-                    $picked = array_map('intval', $request->input('branch_ids', []));
-                    $meta['branch_ids'] = array_values(array_unique(array_intersect($picked, $allowedBranchIds)));
+                    $pickedBranchIds = array_values(array_unique(array_intersect(
+                        array_map('intval', $request->input('branch_ids', [])),
+                        $allowedBranchIds
+                    )));
+                    $meta['branch_ids'] = $pickedBranchIds;
+                } else {
+                    $pickedBranchIds = array_map('intval', $meta['branch_ids'] ?? []);
                 }
+
+                if ($response = $this->assertBranchSelection($companyIdForBranches, $allAccess, $pickedBranchIds)) {
+                    return $response;
+                }
+
                 $user->metadata = $meta;
             }
+
             $user->save();
 
             return response()->json([
@@ -280,6 +331,7 @@ class UserController extends Controller
             ]);
         } catch (Exception $e) {
             Log::error('Error al actualizar usuario', ['id' => $id, 'error' => $e->getMessage()]);
+
             return response()->json([
                 'success' => false,
                 'message' => 'Error al actualizar usuario',
@@ -288,12 +340,16 @@ class UserController extends Controller
         }
     }
 
-    /**
-     * Eliminar / desactivar usuario
-     */
     public function destroy(Request $request, int $id): JsonResponse
     {
-        $user = User::findOrFail($id);
+        try {
+            $user = User::findOrFail($id);
+        } catch (ModelNotFoundException) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Usuario no encontrado',
+            ], 404);
+        }
 
         if ($user->id === $request->user()->id) {
             return response()->json([
@@ -303,38 +359,39 @@ class UserController extends Controller
         }
 
         if (!$this->canAccessUser($user)) {
-            return response()->json([
-                'success' => false,
-                'message' => 'No tiene permiso para eliminar este usuario',
-            ], 403);
+            return $this->denyStaff('No tiene permiso para eliminar este usuario');
         }
 
         try {
             $authUser = $request->user();
-            if (!$authUser->hasPermission('users.delete') && !$authUser->hasRole('super_admin')) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'No tiene permiso para eliminar usuarios',
-                ], 403);
+            if (!$this->canDeleteUsers($authUser)) {
+                return $this->denyStaff('No tiene permiso para eliminar usuarios');
             }
 
             $soft = $request->boolean('soft', true);
             if ($soft) {
                 $user->active = false;
                 $user->save();
+
                 return response()->json([
                     'success' => true,
                     'message' => 'Usuario desactivado correctamente',
                 ]);
             }
 
+            if (!$authUser->hasRole('super_admin')) {
+                return $this->denyStaff('Solo super administrador puede eliminar usuarios permanentemente');
+            }
+
             $user->delete();
+
             return response()->json([
                 'success' => true,
                 'message' => 'Usuario eliminado correctamente',
             ]);
         } catch (Exception $e) {
             Log::error('Error al eliminar usuario', ['id' => $id, 'error' => $e->getMessage()]);
+
             return response()->json([
                 'success' => false,
                 'message' => 'Error al eliminar usuario',
@@ -352,6 +409,10 @@ class UserController extends Controller
         if ($auth->hasRole('company_admin') && $auth->company_id && $auth->company_id === $target->company_id) {
             return true;
         }
+        if ($auth->hasPermission('users.manage') && $auth->company_id && $auth->company_id === $target->company_id) {
+            return true;
+        }
+
         return $auth->id === $target->id;
     }
 
@@ -384,6 +445,7 @@ class UserController extends Controller
             $base['company'] = $user->company?->razon_social ?? null;
             $base['updated_at'] = $user->updated_at?->toIso8601String();
         }
+
         return $base;
     }
 }
