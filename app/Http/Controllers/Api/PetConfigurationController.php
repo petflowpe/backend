@@ -12,6 +12,24 @@ use Exception;
 
 class PetConfigurationController extends Controller
 {
+    private const BASE_TYPES = [
+        'species',
+        'dog_breed',
+        'cat_breed',
+        'temperament',
+        'behavior',
+        'client_tag',
+        'pet_tag',
+        'appointment_tag',
+        'service_tag',
+        'staff_tag',
+    ];
+
+    private function isAllowedType(string $type): bool
+    {
+        return in_array($type, self::BASE_TYPES, true) || (bool) preg_match('/^breed_.+/', $type);
+    }
+
     /**
      * Obtener configuraciones por tipo
      */
@@ -97,6 +115,11 @@ class PetConfigurationController extends Controller
                 'breeds_by_species' => $breedsBySpecies,
                 'temperaments' => $configurations->where('type', 'temperament')->pluck('name')->toArray(),
                 'behaviors' => $configurations->where('type', 'behavior')->pluck('name')->toArray(),
+                'client_tags' => $configurations->where('type', 'client_tag')->pluck('name')->toArray(),
+                'pet_tags' => $configurations->where('type', 'pet_tag')->pluck('name')->toArray(),
+                'appointment_tags' => $configurations->where('type', 'appointment_tag')->pluck('name')->toArray(),
+                'service_tags' => $configurations->where('type', 'service_tag')->pluck('name')->toArray(),
+                'staff_tags' => $configurations->where('type', 'staff_tag')->pluck('name')->toArray(),
             ];
 
             return response()->json([
@@ -123,9 +146,8 @@ class PetConfigurationController extends Controller
                     'required',
                     'string',
                     function ($attribute, $value, $fail) {
-                        $allowed = ['species', 'dog_breed', 'cat_breed', 'temperament', 'behavior'];
-                        if (! in_array($value, $allowed) && ! preg_match('/^breed_.+/', $value)) {
-                            $fail('El tipo debe ser species, dog_breed, cat_breed, temperament, behavior o breed_<especie>.');
+                        if (! $this->isAllowedType((string) $value)) {
+                            $fail('El tipo de configuración no es válido.');
                         }
                     },
                 ],
@@ -215,8 +237,7 @@ class PetConfigurationController extends Controller
                     'required',
                     'string',
                     function ($attribute, $value, $fail) {
-                        $allowed = ['species', 'dog_breed', 'cat_breed', 'temperament', 'behavior'];
-                        if (! in_array($value, $allowed) && ! preg_match('/^breed_.+/', $value)) {
+                        if (! $this->isAllowedType((string) $value)) {
                             $fail('El tipo no es válido.');
                         }
                     },

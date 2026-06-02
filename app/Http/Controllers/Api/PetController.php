@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Api;
 
+use App\Helpers\ScopeHelper;
 use App\Http\Controllers\Controller;
 use App\Http\Traits\RespondsWithPagination;
 use App\Models\Pet;
@@ -64,15 +65,17 @@ class PetController extends Controller
             'photos'
         ]);
 
+        $companyId = ScopeHelper::companyId($request) ?? $request->get('company_id');
+        if ($companyId !== null) {
+            $query->where('company_id', $companyId);
+        }
+
         if ($request->has('client_id')) {
             $clientId = (int) $request->client_id;
             $query->where(function ($q) use ($clientId) {
                 $q->where('client_id', $clientId)
                     ->orWhereHas('owners', fn ($ownersQuery) => $ownersQuery->where('clients.id', $clientId));
             });
-        }
-        if ($request->has('company_id')) {
-            $query->where('company_id', $request->company_id);
         }
         if ($request->boolean('only_active', false)) {
             $query->where('fallecido', false);
@@ -224,6 +227,10 @@ class PetController extends Controller
             $ownerIds = $this->normalizeOwnerIds($data['owner_ids'] ?? null, (int) $data['client_id']);
             unset($data['photos']);
             unset($data['owner_ids']);
+            if (empty($data['company_id']) && !empty($data['client_id'])) {
+                $client = Client::find($data['client_id']);
+                $data['company_id'] = $client?->company_id;
+            }
             $pet = Pet::create($data);
             $this->syncPetOwners($pet, $ownerIds);
 
