@@ -11,11 +11,11 @@ on:
 
 concurrency:
   group: deploy-backend-production
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   deploy-backend:
-    if: github.event_name != 'repository_dispatch'
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     env:
       SSH_HOST: ${{ secrets.SSH_HOST }}
@@ -128,9 +128,11 @@ jobs:
     if: |
       always() && (
         github.event_name == 'repository_dispatch' ||
-        (github.event_name == 'push' && needs.deploy-backend.result == 'success')
+        (
+          (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+          needs.deploy-backend.result == 'success'
+        )
       )
-    continue-on-error: true
     env:
       SSH_HOST: ${{ secrets.SSH_HOST }}
       SSH_USER: ${{ secrets.SSH_USER }}
