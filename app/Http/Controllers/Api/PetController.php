@@ -565,9 +565,10 @@ class PetController extends Controller
             $vaccines = VaccineRecord::where('pet_id', $pet->id)->orderByDesc('date')->get()->map(fn ($v) => [
                 'id' => $v->id,
                 'type' => 'vaccine',
-                'event_type' => $v->vaccine_name ?? 'Vacunación',
-                'title' => $v->vaccine_name ?? 'Vacuna',
+                'event_type' => $v->name ?? 'Vacunación',
+                'title' => $v->name ?? 'Vacuna',
                 'description' => $v->notes ?? null,
+                'veterinarian' => $v->veterinarian,
                 'attachments' => [],
                 'occurred_at' => optional($v->date)->toDateString(),
                 'next_due_date' => optional($v->next_due_date)->toDateString(),
@@ -609,6 +610,65 @@ class PetController extends Controller
             ]);
         } catch (Exception $e) {
             return response()->json(['success' => false, 'message' => 'Error al obtener timeline de mascota: ' . $e->getMessage()], 500);
+        }
+    }
+
+    public function storeVaccineRecord(Request $request, $id): JsonResponse
+    {
+        try {
+            if ($auth = $this->denyWithoutPermission($request, 'pets.update')) {
+                return $auth;
+            }
+            $pet = Pet::findOrFail($id);
+            $validator = Validator::make($request->all(), [
+                'client_id' => 'required|integer|exists:clients,id',
+                'company_id' => 'nullable|integer|exists:companies,id',
+                'name' => 'required|string|max:255',
+                'date' => 'required|date',
+                'next_due_date' => 'nullable|date',
+                'veterinarian' => 'nullable|string|max:255',
+                'lot' => 'nullable|string|max:100',
+                'manufacturer' => 'nullable|string|max:255',
+                'notes' => 'nullable|string',
+            ]);
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Errores de validación',
+                    'errors' => $validator->errors(),
+                ], 422);
+            }
+            $data = $validator->validated();
+            $record = VaccineRecord::create([
+                'pet_id' => $pet->id,
+                'client_id' => $data['client_id'],
+                'company_id' => $data['company_id'] ?? $pet->company_id,
+                'user_id' => $request->user()?->id,
+                'name' => $data['name'],
+                'date' => $data['date'],
+                'next_due_date' => $data['next_due_date'] ?? null,
+                'veterinarian' => $data['veterinarian'] ?? null,
+                'lot' => $data['lot'] ?? null,
+                'manufacturer' => $data['manufacturer'] ?? null,
+                'notes' => $data['notes'] ?? null,
+            ]);
+            if (!empty($data['date'])) {
+                $pet->last_vaccination_date = $data['date'];
+            }
+            if (!empty($data['next_due_date'])) {
+                $pet->next_vaccination_date = $data['next_due_date'];
+            }
+            $pet->save();
+            return response()->json([
+                'success' => true,
+                'message' => 'Vacuna registrada',
+                'data' => $record,
+            ], 201);
+        } catch (Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al registrar vacuna: ' . $e->getMessage(),
+            ], 500);
         }
     }
 

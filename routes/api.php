@@ -473,6 +473,7 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'throttle:api', EnsureUserCompa
     Route::apiResource('pets', PetController::class);
     Route::post('/pets/{id}/photos', [PetController::class, 'storePhotos']);
     Route::get('/pets/{id}/timeline', [PetController::class, 'timeline']);
+    Route::post('/pets/{id}/vaccine-records', [PetController::class, 'storeVaccineRecord']);
     Route::get('/pets/{id}/audit-history', [PetController::class, 'auditHistory']);
     Route::get('/clients/{clientId}/pets', [PetController::class, 'getByClient']);
 
