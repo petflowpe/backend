@@ -553,6 +553,12 @@ class PetController extends Controller
                 'event_type' => $m->type,
                 'title' => $m->title ?: $m->type,
                 'description' => $m->description,
+                'diagnosis' => $m->diagnosis,
+                'treatment' => $m->treatment,
+                'weight' => $m->weight,
+                'temperature' => $m->temperature,
+                'vital_signs' => $m->vital_signs ?? [],
+                'notes' => $m->notes,
                 'attachments' => $m->attachments ?? [],
                 'occurred_at' => optional($m->date)->toDateString(),
             ]);

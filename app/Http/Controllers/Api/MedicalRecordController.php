@@ -21,11 +21,18 @@ class MedicalRecordController extends Controller
         try {
             $query = MedicalRecord::with(['pet', 'client', 'user', 'appointment']);
 
-            if ($request->has('pet_id')) {
+            $routePetId = $request->route('petId');
+            $routeClientId = $request->route('clientId');
+
+            if ($routePetId) {
+                $query->where('pet_id', $routePetId);
+            } elseif ($request->has('pet_id')) {
                 $query->where('pet_id', $request->pet_id);
             }
 
-            if ($request->has('client_id')) {
+            if ($routeClientId) {
+                $query->where('client_id', $routeClientId);
+            } elseif ($request->has('client_id')) {
                 $query->where('client_id', $request->client_id);
             }
 
