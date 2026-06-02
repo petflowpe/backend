@@ -81,6 +81,11 @@ jobs:
           cd "$DEPLOY_PATH"
           set -x
 
+          if [ ! -f .env ]; then
+            echo "ERROR: falta .env en $DEPLOY_PATH (debe existir en el servidor; no se sube por rsync)"
+            exit 1
+          fi
+
           echo "Instalando dependencias PHP..."
           composer install --no-dev --optimize-autoloader --no-interaction
 
@@ -94,12 +99,16 @@ jobs:
             echo "Seeders omitidos."
           fi
 
-          echo "Limpiando y optimizando cache..."
+          echo "Limpiando cache..."
           php artisan config:clear
           php artisan route:clear
           php artisan view:clear
           php artisan cache:clear
-          php artisan optimize
+
+          echo "Generando cache de produccion (sin route:cache por rutas con closures)..."
+          php artisan config:cache
+          php artisan view:cache
+          php artisan event:cache 2>/dev/null || true
 
           echo "Ajustando permisos de storage..."
           mkdir -p storage/framework/cache storage/framework/sessions storage/framework/views storage/logs bootstrap/cache
@@ -119,14 +128,20 @@ jobs:
       DEPLOY_PATH: ${{ secrets.FRONTEND_DEPLOY_PATH }}
 
     steps:
-      - name: Omitir si no hay ruta frontend
+      - name: Resolver ruta frontend
         env:
           SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
         run: |
-          if [ -z "$DEPLOY_PATH" ] || [ -z "$SSH_HOST" ] || [ -z "$SSH_USER" ] || [ -z "$SSH_PRIVATE_KEY" ]; then
-            echo "FRONTEND_DEPLOY_PATH no configurado en backend; omitiendo deploy frontend."
+          if [ -z "$SSH_HOST" ] || [ -z "$SSH_USER" ] || [ -z "$SSH_PRIVATE_KEY" ]; then
+            echo "Secrets SSH incompletos; omitiendo deploy frontend."
             exit 0
           fi
+          FRONTEND_PATH="${{ secrets.FRONTEND_DEPLOY_PATH }}"
+          if [ -z "$FRONTEND_PATH" ]; then
+            FRONTEND_PATH="/var/www/petflow/frontend/dist"
+            echo "Usando ruta frontend por defecto: $FRONTEND_PATH"
+          fi
+          echo "DEPLOY_PATH=$FRONTEND_PATH" >> "$GITHUB_ENV"
           echo "DEPLOY_FRONTEND=1" >> "$GITHUB_ENV"
 
       - name: Checkout frontend
