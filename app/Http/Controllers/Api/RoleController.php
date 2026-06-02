@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Api;
 
+use App\Http\Controllers\Concerns\HandlesStaffAuthorization;
 use App\Http\Controllers\Controller;
 use App\Models\Permission;
 use App\Models\Role;
@@ -12,6 +13,7 @@ use Illuminate\Validation\Rule;
 
 class RoleController extends Controller
 {
+    use HandlesStaffAuthorization;
     /**
      * Roles de sistema cuyo "name" NO se puede modificar, eliminar ni desactivar.
      * Los permisos sí pueden ajustarse (menos super_admin, que se fuerza a '*').
@@ -29,7 +31,12 @@ class RoleController extends Controller
      */
     public function index(Request $request): JsonResponse
     {
-        $query = Role::query();
+        $authUser = $request->user();
+        if (!$this->canViewRoles($authUser)) {
+            return $this->denyStaff('No tiene permiso para consultar roles');
+        }
+
+        $query = Role::query()->with('permissions');
 
         // Por defecto, solo activos. Con include_inactive=1 se listan todos.
         if (!$request->boolean('include_inactive')) {
@@ -63,7 +70,11 @@ class RoleController extends Controller
      */
     public function show(int $id): JsonResponse
     {
-        $role = Role::withCount('users')->findOrFail($id);
+        if (!$this->canViewRoles(request()->user())) {
+            return $this->denyStaff('No tiene permiso para consultar roles');
+        }
+
+        $role = Role::with('permissions')->withCount('users')->findOrFail($id);
 
         return response()->json([
             'success' => true,
@@ -76,11 +87,8 @@ class RoleController extends Controller
      */
     public function store(Request $request): JsonResponse
     {
-        if (!$this->canManageRoles($request)) {
-            return response()->json([
-                'success' => false,
-                'message' => 'No tiene permiso para crear roles',
-            ], 403);
+        if (!$this->canManageRoles($request->user())) {
+            return $this->denyStaff('No tiene permiso para crear roles');
         }
 
         $data = $request->validate([
@@ -125,14 +133,15 @@ class RoleController extends Controller
      */
     public function update(Request $request, int $id): JsonResponse
     {
-        if (!$this->canManageRoles($request)) {
-            return response()->json([
-                'success' => false,
-                'message' => 'No tiene permiso para editar roles',
-            ], 403);
+        if (!$this->canManageRoles($request->user())) {
+            return $this->denyStaff('No tiene permiso para editar roles');
         }
 
         $role = Role::findOrFail($id);
+
+        if (!$this->canManageRoleRecord($request->user(), $role, 'update')) {
+            return $this->denyStaff('No puede modificar este rol de sistema');
+        }
 
         $data = $request->validate([
             'name' => ['sometimes', 'string', 'max:64', 'regex:/^[a-z0-9_\-]+$/', Rule::unique('roles', 'name')->ignore($role->id)],
@@ -203,14 +212,15 @@ class RoleController extends Controller
      */
     public function toggle(Request $request, int $id): JsonResponse
     {
-        if (!$this->canManageRoles($request)) {
-            return response()->json([
-                'success' => false,
-                'message' => 'No tiene permiso para modificar roles',
-            ], 403);
+        if (!$this->canManageRoles($request->user())) {
+            return $this->denyStaff('No tiene permiso para modificar roles');
         }
 
         $role = Role::findOrFail($id);
+
+        if (!$this->canManageRoleRecord($request->user(), $role, 'toggle')) {
+            return $this->denyStaff('No puede modificar este rol de sistema');
+        }
 
         if ($this->isProtectedRole($role)) {
             return response()->json([
@@ -234,14 +244,15 @@ class RoleController extends Controller
      */
     public function destroy(Request $request, int $id): JsonResponse
     {
-        if (!$this->canManageRoles($request)) {
-            return response()->json([
-                'success' => false,
-                'message' => 'No tiene permiso para eliminar roles',
-            ], 403);
+        if (!$this->canManageRoles($request->user())) {
+            return $this->denyStaff('No tiene permiso para eliminar roles');
         }
 
         $role = Role::withCount('users')->findOrFail($id);
+
+        if (!$this->canManageRoleRecord($request->user(), $role, 'delete')) {
+            return $this->denyStaff('No puede eliminar este rol de sistema');
+        }
 
         if ($this->isProtectedRole($role) || $role->is_system) {
             return response()->json([
@@ -295,19 +306,6 @@ class RoleController extends Controller
     private function isProtectedRole(Role $role): bool
     {
         return in_array($role->name, self::PROTECTED_ROLE_NAMES, true) || (bool) $role->is_system;
-    }
-
-    private function canManageRoles(Request $request): bool
-    {
-        $user = $request->user();
-        if (!$user) {
-            return false;
-        }
-
-        return $user->hasRole('super_admin')
-            || $user->hasRole('company_admin')
-            || $user->hasPermission('users.roles')
-            || $user->hasPermission('users.manage');
     }
 
     /**
