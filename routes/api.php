@@ -228,6 +228,8 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'throttle:api', EnsureUserCompa
     // ========================
     Route::apiResource('clients', ClientController::class);
     Route::post('/clients/{client}/activate', [ClientController::class, 'activate']);
+    Route::get('/clients/{client}/pets', [ClientController::class, 'pets']);
+    Route::get('/clients/{client}/billing-history', [ClientController::class, 'billingHistory']);
     Route::get('/companies/{company}/clients', [ClientController::class, 'getByCompany']);
     Route::post('/clients/search-by-document', [ClientController::class, 'searchByDocument']);
 

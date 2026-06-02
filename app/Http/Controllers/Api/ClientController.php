@@ -7,6 +7,8 @@ use App\Http\Traits\RespondsWithPagination;
 use App\Helpers\ScopeHelper;
 use App\Models\Client;
 use App\Models\Company;
+use App\Models\Invoice;
+use App\Models\Boleta;
 use App\Models\Pet;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
@@ -87,6 +89,8 @@ class ClientController extends Controller
                 'fecha_nacimiento' => 'nullable|date',
                 'genero' => 'nullable|string|in:Masculino,Femenino,Otro',
                 'notas' => 'nullable|string',
+                'critical_note' => 'nullable|string',
+                'critical_pet_note' => 'nullable|string',
                 'preferencias_contacto' => 'nullable|array',
                 'puntos_fidelizacion' => 'nullable|integer|min:0',
                 'nivel_fidelizacion' => 'nullable|string|in:Bronce,Plata,Oro,VIP',
@@ -321,6 +325,8 @@ class ClientController extends Controller
                 'fecha_nacimiento' => 'nullable|date',
                 'genero' => 'nullable|string|in:Masculino,Femenino,Otro',
                 'notas' => 'nullable|string',
+                'critical_note' => 'nullable|string',
+                'critical_pet_note' => 'nullable|string',
                 'preferencias_contacto' => 'nullable|array',
                 'puntos_fidelizacion' => 'nullable|integer|min:0',
                 'nivel_fidelizacion' => 'nullable|string|in:Bronce,Plata,Oro,VIP',
@@ -533,6 +539,100 @@ class ClientController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Error al obtener clientes: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Obtener mascotas de un cliente (scope por empresa)
+     */
+    public function pets(Request $request, Client $client): JsonResponse
+    {
+        try {
+            $companyId = ScopeHelper::companyId($request) ?? $request->get('company_id');
+            if ($companyId !== null && (int) $client->company_id !== (int) $companyId) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'No autorizado para acceder a este cliente'
+                ], 403);
+            }
+
+            $pets = $client->pets()
+                ->where('fallecido', false)
+                ->orderBy('name')
+                ->get();
+
+            return response()->json([
+                'success' => true,
+                'data' => $pets,
+            ]);
+        } catch (Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al obtener mascotas del cliente: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Historial de facturación de un cliente (facturas + boletas)
+     */
+    public function billingHistory(Request $request, Client $client): JsonResponse
+    {
+        try {
+            $companyId = ScopeHelper::companyId($request) ?? $request->get('company_id');
+            if ($companyId !== null && (int) $client->company_id !== (int) $companyId) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'No autorizado para acceder a este cliente'
+                ], 403);
+            }
+
+            $invoices = Invoice::query()
+                ->where('client_id', $client->id)
+                ->select([
+                    'id',
+                    'company_id',
+                    'client_id',
+                    'serie',
+                    'numero as correlativo',
+                    'fecha_emision',
+                    'total',
+                    'estado_sunat',
+                    'created_at',
+                ])
+                ->get()
+                ->map(fn ($row) => array_merge($row->toArray(), ['type' => 'Factura']));
+
+            $boletas = Boleta::query()
+                ->where('client_id', $client->id)
+                ->select([
+                    'id',
+                    'company_id',
+                    'client_id',
+                    'serie',
+                    'numero as correlativo',
+                    'fecha_emision',
+                    'total',
+                    'estado_sunat',
+                    'created_at',
+                ])
+                ->get()
+                ->map(fn ($row) => array_merge($row->toArray(), ['type' => 'Boleta']));
+
+            $rows = $invoices
+                ->concat($boletas)
+                ->sortByDesc(fn ($row) => $row['fecha_emision'] ?? $row['created_at'] ?? null)
+                ->values();
+
+            return response()->json([
+                'success' => true,
+                'data' => $rows,
+            ]);
+        } catch (Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al obtener historial de facturación: ' . $e->getMessage(),
             ], 500);
         }
     }

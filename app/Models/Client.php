@@ -38,6 +38,8 @@ class Client extends Model
         'fecha_ultima_visita',
         'fecha_registro',
         'activo',
+        'critical_note',
+        'critical_pet_note',
     ];
 
     protected $casts = [

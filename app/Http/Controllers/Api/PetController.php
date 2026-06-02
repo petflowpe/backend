@@ -345,6 +345,17 @@ class PetController extends Controller
             }
 
             $validated = $validator->validated();
+            if (!$this->canManageRestrictedPetFields($request)) {
+                $restrictedFields = ['name', 'last_name', 'breed'];
+                foreach ($restrictedFields as $field) {
+                    if (array_key_exists($field, $validated) && (string) $validated[$field] !== (string) ($pet->{$field} ?? '')) {
+                        return response()->json([
+                            'success' => false,
+                            'message' => 'Solo administradores pueden editar nombre, apellido y raza de una mascota registrada.',
+                        ], 403);
+                    }
+                }
+            }
             if (($validated['identification_type'] ?? null) === 'Microchip' && !empty($validated['identification_number']) && empty($validated['microchip'])) {
                 $validated['microchip'] = $validated['identification_number'];
             }
@@ -391,11 +402,17 @@ class PetController extends Controller
     /**
      * Eliminar mascota
      */
-    public function destroy($id): JsonResponse
+    public function destroy(Request $request, $id): JsonResponse
     {
         try {
-            if ($auth = $this->denyWithoutPermission(request(), 'pets.delete')) {
+            if ($auth = $this->denyWithoutPermission($request, 'pets.delete')) {
                 return $auth;
+            }
+            if (!$this->canManageRestrictedPetFields($request)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Solo administradores pueden eliminar mascotas.',
+                ], 403);
             }
             $pet = Pet::findOrFail($id);
             $pet->delete();
@@ -796,6 +813,17 @@ class PetController extends Controller
             'success' => false,
             'message' => 'No autorizado para esta acción',
         ], 403);
+    }
+
+    private function canManageRestrictedPetFields(Request $request): bool
+    {
+        $user = $request->user();
+        if (!$user || !method_exists($user, 'hasRole')) {
+            return false;
+        }
+        return $user->hasRole('super_admin')
+            || $user->hasRole('company_admin')
+            || $user->hasRole('admin');
     }
 
     private function detectDuplicatePet(array $data, ?int $ignorePetId = null): ?array
