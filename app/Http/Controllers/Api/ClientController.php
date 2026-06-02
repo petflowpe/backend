@@ -26,7 +26,7 @@ class ClientController extends Controller
     public function index(Request $request): JsonResponse
     {
         try {
-            $query = Client::with(['company:id,ruc,razon_social']);
+            $query = Client::with(['company:id,ruc,razon_social'])->withCount('pets');
 
             $companyId = ScopeHelper::companyId($request) ?? $request->get('company_id');
             if ($companyId !== null) {
