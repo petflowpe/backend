@@ -14,6 +14,7 @@ class Boleta extends Model
         'company_id',
         'branch_id',
         'client_id',
+        'appointment_id',
         'daily_summary_id',
         'tipo_documento',
         'serie',

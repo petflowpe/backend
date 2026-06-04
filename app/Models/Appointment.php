@@ -14,6 +14,7 @@ class Appointment extends Model
     use HasFactory;
 
     protected $fillable = [
+        'tracking_code',
         'client_id',
         'pet_id',
         'company_id',
@@ -39,6 +40,8 @@ class Appointment extends Model
         'total',
         'payment_status',
         'payment_method',
+        'boleta_id',
+        'invoice_id',
         'notes',
         'cancellation_reason',
         'client_category',
@@ -125,6 +128,21 @@ class Appointment extends Model
     public function items(): HasMany
     {
         return $this->hasMany(AppointmentItem::class);
+    }
+
+    public function boleta(): BelongsTo
+    {
+        return $this->belongsTo(Boleta::class);
+    }
+
+    public function invoice(): BelongsTo
+    {
+        return $this->belongsTo(Invoice::class);
+    }
+
+    public function hasElectronicDocument(): bool
+    {
+        return $this->boleta_id || $this->invoice_id;
     }
 
     public function parentAppointment(): BelongsTo

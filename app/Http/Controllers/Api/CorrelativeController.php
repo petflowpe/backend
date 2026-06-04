@@ -442,6 +442,60 @@ class CorrelativeController extends Controller
     }
 
     /**
+     * Sincronizar series desde configuración SUNAT (invoice_settings) de la empresa.
+     */
+    public function syncFromSunatConfig(Branch $branch): JsonResponse
+    {
+        try {
+            $company = $branch->company;
+            $invoice = $company->getInvoiceConfig();
+            $series = $invoice['series'] ?? [];
+
+            $map = [
+                '01' => $series['factura'] ?? null,
+                '03' => $series['boleta'] ?? null,
+                '07' => $series['nota_credito'] ?? null,
+                '08' => $series['nota_debito'] ?? null,
+                '09' => $series['guia_remision'] ?? null,
+            ];
+
+            $synced = [];
+            foreach ($map as $tipo => $serie) {
+                if (!$serie) {
+                    continue;
+                }
+                $serie = strtoupper((string) $serie);
+                $correlative = Correlative::updateOrCreate(
+                    [
+                        'branch_id' => $branch->id,
+                        'tipo_documento' => $tipo,
+                        'serie' => $serie,
+                    ],
+                    ['correlativo_actual' => 0]
+                );
+                $synced[] = [
+                    'tipo_documento' => $tipo,
+                    'serie' => $correlative->serie,
+                    'correlativo_actual' => $correlative->correlativo_actual,
+                ];
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => count($synced) > 0
+                    ? 'Correlativos sincronizados desde config SUNAT'
+                    : 'No hay series en la configuración SUNAT de la empresa',
+                'data' => ['synced' => $synced],
+            ]);
+        } catch (Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al sincronizar: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
      * Obtener tipos de documentos disponibles
      */
     public function getDocumentTypes(): JsonResponse

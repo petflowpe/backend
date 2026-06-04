@@ -14,6 +14,7 @@ class CashSession extends Model
     protected $fillable = [
         'company_id',
         'branch_id',
+        'vehicle_id',
         'user_id',
         'opening_amount',
         'closing_amount',
@@ -47,6 +48,11 @@ class CashSession extends Model
     public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);
+    }
+
+    public function vehicle(): BelongsTo
+    {
+        return $this->belongsTo(Vehicle::class);
     }
 
     public function payments(): HasMany

@@ -28,9 +28,11 @@ class ClientController extends Controller
         try {
             $query = Client::with(['company:id,ruc,razon_social'])->withCount('pets');
 
-            $companyId = ScopeHelper::companyId($request) ?? $request->get('company_id');
+            $companyId = ScopeHelper::companyId($request);
             if ($companyId !== null) {
                 $query->where('company_id', $companyId);
+            } elseif ($request->user()?->hasRole('super_admin') && $request->filled('company_id')) {
+                $query->where('company_id', (int) $request->company_id);
             }
 
             // Filtrar por tipo de documento
@@ -553,7 +555,10 @@ class ClientController extends Controller
     public function pets(Request $request, Client $client): JsonResponse
     {
         try {
-            $companyId = ScopeHelper::companyId($request) ?? $request->get('company_id');
+            $companyId = ScopeHelper::companyId($request)
+                ?? ($request->user()?->hasRole('super_admin') && $request->filled('company_id')
+                    ? (int) $request->company_id
+                    : null);
             if ($companyId !== null && (int) $client->company_id !== (int) $companyId) {
                 return response()->json([
                     'success' => false,
@@ -584,7 +589,10 @@ class ClientController extends Controller
     public function billingHistory(Request $request, Client $client): JsonResponse
     {
         try {
-            $companyId = ScopeHelper::companyId($request) ?? $request->get('company_id');
+            $companyId = ScopeHelper::companyId($request)
+                ?? ($request->user()?->hasRole('super_admin') && $request->filled('company_id')
+                    ? (int) $request->company_id
+                    : null);
             if ($companyId !== null && (int) $client->company_id !== (int) $companyId) {
                 return response()->json([
                     'success' => false,
@@ -691,5 +699,49 @@ class ClientController extends Controller
                 'message' => 'Error al buscar cliente: ' . $e->getMessage()
             ], 500);
         }
+    }
+
+    /**
+     * Ajustar puntos de fidelización (+/-)
+     */
+    public function adjustLoyalty(Request $request, Client $client): JsonResponse
+    {
+        $this->authorize('update', $client);
+
+        $scopedCompanyId = ScopeHelper::companyId($request);
+        if ($scopedCompanyId && (int) $client->company_id !== $scopedCompanyId) {
+            return response()->json(['success' => false, 'message' => 'No autorizado'], 403);
+        }
+
+        $validator = Validator::make($request->all(), [
+            'delta' => 'required|integer',
+            'reason' => 'nullable|string|max:500',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'errors' => $validator->errors(),
+            ], 422);
+        }
+
+        $delta = (int) $request->delta;
+        $newPoints = max(0, (int) $client->puntos_fidelizacion + $delta);
+        $client->update(['puntos_fidelizacion' => $newPoints]);
+        $client->recalculateLevel();
+
+        $note = trim((string) $request->reason);
+        if ($note !== '') {
+            $prefix = "[Fidelización {$delta >= 0 ? '+' : ''}{$delta}] ";
+            $client->update([
+                'notas' => trim($prefix . $note . "\n" . ($client->notas ?? '')),
+            ]);
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Puntos actualizados',
+            'data' => $client->fresh(),
+        ]);
     }
 }

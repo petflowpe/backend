@@ -14,19 +14,29 @@ class Payment extends Model
         'company_id',
         'branch_id',
         'invoice_id',
+        'appointment_id',
         'user_id',
         'cash_session_id',
         'amount',
+        'fee',
+        'net_amount',
         'currency',
         'method',
+        'gateway',
+        'status',
         'reference',
+        'external_id',
         'paid_at',
         'notes',
+        'metadata',
     ];
 
     protected $casts = [
         'amount' => 'decimal:2',
+        'fee' => 'decimal:2',
+        'net_amount' => 'decimal:2',
         'paid_at' => 'datetime',
+        'metadata' => 'array',
     ];
 
     public function company(): BelongsTo
@@ -44,6 +54,11 @@ class Payment extends Model
         return $this->belongsTo(Invoice::class);
     }
 
+    public function appointment(): BelongsTo
+    {
+        return $this->belongsTo(Appointment::class);
+    }
+
     public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);
@@ -54,5 +69,3 @@ class Payment extends Model
         return $this->belongsTo(CashSession::class);
     }
 }
-
-

@@ -4,13 +4,10 @@ namespace App\Http\Middleware;
 
 use Closure;
 use Illuminate\Http\Request;
-use Illuminate\Support\Str;
 use Symfony\Component\HttpFoundation\Response;
 
 /**
  * Establece el company_id (y opcionalmente branch_id) efectivo para el request.
- * - Usuarios con company_id: usan su empresa; super_admin puede sobreescribir con header X-Company-Id.
- * - Evita confiar solo en body/query; fuente de verdad es el usuario o el header validado.
  */
 class EnsureUserCompanyScope
 {
@@ -24,7 +21,6 @@ class EnsureUserCompanyScope
         $companyId = null;
         $branchId = null;
 
-        // Super admin puede elegir empresa vía header (útil para multi-tenant)
         $requestCompanyId = $request->header('X-Company-Id') ? (int) $request->header('X-Company-Id') : null;
         $requestBranchId = $request->header('X-Branch-Id') ? (int) $request->header('X-Branch-Id') : null;
         $bodyOrQueryCompanyId = $request->has('company_id') ? (int) $request->input('company_id') : null;
@@ -38,8 +34,7 @@ class EnsureUserCompanyScope
         }
 
         if ($companyId === null && $user->company_id) {
-            $companyId = $user->company_id;
-            // Branch solo si pertenece a la empresa del usuario
+            $companyId = (int) $user->company_id;
             if ($requestBranchId) {
                 $branch = \App\Models\Branch::where('id', $requestBranchId)->where('company_id', $companyId)->first();
                 if ($branch) {
@@ -48,8 +43,6 @@ class EnsureUserCompanyScope
             }
         }
 
-        // Enforzar aislamiento por empresa para usuarios no super_admin:
-        // si intentan enviar company_id/branch_id distintos, bloquear.
         if (!$user->hasRole('super_admin') && $user->company_id) {
             if ($requestCompanyId && (int) $requestCompanyId !== (int) $user->company_id) {
                 return response()->json([
@@ -65,7 +58,6 @@ class EnsureUserCompanyScope
             }
         }
 
-        // Si el request no tiene branch en header pero sí en body/query, permitir solo si pertenece a companyId efectivo.
         if ($branchId === null && $bodyOrQueryBranchId && $companyId) {
             $branch = \App\Models\Branch::where('id', $bodyOrQueryBranchId)->where('company_id', $companyId)->first();
             if ($branch) {
@@ -78,18 +70,14 @@ class EnsureUserCompanyScope
             }
         }
 
-        // Exponer en el request para que los controladores usen request()->attributes
         $request->attributes->set('scope_company_id', $companyId);
         $request->attributes->set('scope_branch_id', $branchId);
 
-        // Helpers disponibles en todo el request
         $request->merge([
             '_scope_company_id' => $companyId,
             '_scope_branch_id' => $branchId,
         ]);
 
-        // Compatibilidad: muchos controladores legacy leen company_id/branch_id del request.
-        // En producción, forzamos que reflejen el scope efectivo (salvo super_admin).
         if (!$user->hasRole('super_admin')) {
             $request->merge([
                 'company_id' => $companyId,
@@ -97,7 +85,6 @@ class EnsureUserCompanyScope
             ]);
         }
 
-        // Establecer locale del usuario para respuestas API
         if (!empty($user->locale)) {
             app()->setLocale($user->locale);
         }

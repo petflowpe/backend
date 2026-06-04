@@ -14,6 +14,7 @@ class Invoice extends Model
         'company_id',
         'branch_id',
         'client_id',
+        'appointment_id',
         'tipo_documento',
         'serie',
         'correlativo',

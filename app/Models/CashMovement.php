@@ -15,8 +15,10 @@ class CashMovement extends Model
     protected $fillable = [
         'company_id',
         'branch_id',
+        'vehicle_id',
         'user_id',
         'cash_session_id',
+        'appointment_id',
         'type',
         'amount',
         'description',

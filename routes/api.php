@@ -54,6 +54,7 @@ use App\Http\Controllers\Api\RoutePlanController;
 use App\Http\Controllers\Api\AccountingEntryController;
 use App\Http\Controllers\Api\SearchController;
 use App\Http\Controllers\Api\CoreController;
+use App\Http\Controllers\Api\PublicBookingController;
 use App\Http\Middleware\EnsureUserCompanyScope;
 
 // ========================
@@ -82,6 +83,27 @@ Route::post('/auth/login', [AuthController::class, 'login']);
 Route::post('/auth/forgot-password', [AuthController::class, 'forgotPassword']);
 Route::post('/auth/reset-password', [AuthController::class, 'resetPassword']);
 Route::post('/auth/request-access', [AuthController::class, 'requestAccess']);
+
+// Reserva y seguimiento público (portal invitado)
+Route::prefix('public/booking')->middleware('throttle:60,1')->group(function () {
+    Route::get('/config', [PublicBookingController::class, 'config']);
+    Route::get('/services', [PublicBookingController::class, 'services']);
+    Route::get('/availability', [PublicBookingController::class, 'availability']);
+    Route::post('/', [PublicBookingController::class, 'store']);
+    Route::get('/track/{code}', [PublicBookingController::class, 'track']);
+});
+
+Route::prefix('public/chat')->middleware('throttle:120,1')->group(function () {
+    Route::get('/config', [\App\Http\Controllers\Api\PublicChatController::class, 'config']);
+    Route::post('/start', [\App\Http\Controllers\Api\PublicChatController::class, 'start']);
+    Route::get('/{guestToken}/messages', [\App\Http\Controllers\Api\PublicChatController::class, 'messages']);
+    Route::post('/{guestToken}/messages', [\App\Http\Controllers\Api\PublicChatController::class, 'send']);
+});
+
+Route::prefix('public/webhooks')->middleware('throttle:120,1')->group(function () {
+    Route::post('/mercadopago', [\App\Http\Controllers\Api\PaymentWebhookController::class, 'mercadoPago']);
+    Route::post('/niubiz', [\App\Http\Controllers\Api\PaymentWebhookController::class, 'niubiz']);
+});
 
 // ========================
 // RUTAS PROTEGIDAS (CON AUTENTICACIÓN + RATE LIMITING)
@@ -129,6 +151,9 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'throttle:api', EnsureUserCompa
     // ZONAS Y RUTAS (OPERACIONES)
     // ========================
     Route::apiResource('zones', ZoneController::class);
+    Route::get('/route-plans/daily-schedule', [RoutePlanController::class, 'dailySchedule']);
+    Route::post('/route-plans/from-appointments', [RoutePlanController::class, 'saveFromAppointments']);
+    Route::get('/driver/day', [RoutePlanController::class, 'driverDay']);
     Route::get('/route-plans', [RoutePlanController::class, 'index']);
     Route::post('/route-plans', [RoutePlanController::class, 'store']);
     Route::get('/route-plans/{route}', [RoutePlanController::class, 'show']);
@@ -179,6 +204,11 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'throttle:api', EnsureUserCompa
     Route::apiResource('companies', CompanyController::class);
     Route::post('/companies/{company}/activate', [CompanyController::class, 'activate']);
     Route::post('/companies/{company}/toggle-production', [CompanyController::class, 'toggleProductionMode']);
+
+    Route::get('/companies/{company}/sunat-config', [\App\Http\Controllers\Api\SunatConfigController::class, 'show']);
+    Route::put('/companies/{company}/sunat-config', [\App\Http\Controllers\Api\SunatConfigController::class, 'update']);
+    Route::post('/companies/{company}/sunat-config/environment', [\App\Http\Controllers\Api\SunatConfigController::class, 'setEnvironment']);
+    Route::post('/companies/{company}/sunat-config/certificate', [\App\Http\Controllers\Api\SunatConfigController::class, 'uploadCertificate']);
 
     // Configuraciones de empresas
     Route::prefix('companies/{company_id}/config')->group(function () {
@@ -232,6 +262,7 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'throttle:api', EnsureUserCompa
     Route::get('/clients/{client}/billing-history', [ClientController::class, 'billingHistory']);
     Route::get('/companies/{company}/clients', [ClientController::class, 'getByCompany']);
     Route::post('/clients/search-by-document', [ClientController::class, 'searchByDocument']);
+    Route::post('/clients/{client}/loyalty-adjust', [ClientController::class, 'adjustLoyalty']);
 
     // ========================
     // PRODUCTOS / SERVICIOS (CATÁLOGO)
@@ -296,6 +327,7 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'throttle:api', EnsureUserCompa
     Route::put('/branches/{branch}/correlatives/{correlative}', [CorrelativeController::class, 'update']);
     Route::delete('/branches/{branch}/correlatives/{correlative}', [CorrelativeController::class, 'destroy']);
     Route::post('/branches/{branch}/correlatives/batch', [CorrelativeController::class, 'createBatch']);
+    Route::post('/branches/{branch}/correlatives/sync-sunat-config', [CorrelativeController::class, 'syncFromSunatConfig']);
     Route::post('/branches/{branch}/correlatives/{correlative}/increment', [CorrelativeController::class, 'increment']);
 
     // Catálogos de correlativos
@@ -305,16 +337,41 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'throttle:api', EnsureUserCompa
     // CAJA Y PAGOS
     // ========================
     Route::get('/cash-sessions', [CashSessionController::class, 'index']);
+    Route::get('/cash-sessions/current', [CashSessionController::class, 'current']);
+    Route::get('/cash-sessions/day-summary', [CashSessionController::class, 'daySummary']);
     Route::post('/cash-sessions/open', [CashSessionController::class, 'open']);
     Route::post('/cash-sessions/{cashSession}/close', [CashSessionController::class, 'close']);
 
     Route::get('/payments', [PaymentController::class, 'index']);
     Route::post('/payments', [PaymentController::class, 'store']);
+    Route::post('/payments/checkout', [PaymentController::class, 'createCheckout']);
+
+    Route::get('/companies/{company}/payment-gateways', [\App\Http\Controllers\Api\PaymentGatewayController::class, 'show']);
+    Route::put('/companies/{company}/payment-gateways', [\App\Http\Controllers\Api\PaymentGatewayController::class, 'update']);
+    Route::post('/companies/{company}/payment-gateways/{gateway}/test', [\App\Http\Controllers\Api\PaymentGatewayController::class, 'test']);
 
     Route::get('/reports/sales', [ReportController::class, 'salesSummary']);
     Route::get('/reports/stats', [ReportController::class, 'dashboardStats']);
     Route::get('/reports/products', [ReportController::class, 'productAnalytics']);
     Route::get('/reports/clients', [ReportController::class, 'clientAnalytics']);
+    Route::get('/reports/export/dataset/{dataset}', [\App\Http\Controllers\Api\ExportController::class, 'dataset']);
+    Route::get('/reports/export/report/{reportId}', [\App\Http\Controllers\Api\ExportController::class, 'report']);
+    Route::get('/reports/growth/overview', [\App\Http\Controllers\Api\GrowthAnalyticsController::class, 'overview']);
+    Route::get('/reports/growth/appointment-trends', [\App\Http\Controllers\Api\GrowthAnalyticsController::class, 'appointmentTrends']);
+    Route::get('/reports/growth/geographic', [\App\Http\Controllers\Api\GrowthAnalyticsController::class, 'geographic']);
+    Route::get('/reports/growth/segmentation', [\App\Http\Controllers\Api\GrowthAnalyticsController::class, 'segmentation']);
+    Route::get('/reports/growth/mobile-patterns', [\App\Http\Controllers\Api\GrowthAnalyticsController::class, 'mobilePatterns']);
+
+    Route::get('/chat/settings', [\App\Http\Controllers\Api\ChatController::class, 'settings']);
+    Route::put('/chat/settings', [\App\Http\Controllers\Api\ChatController::class, 'updateSettings']);
+    Route::get('/chat/conversations', [\App\Http\Controllers\Api\ChatController::class, 'index']);
+    Route::get('/chat/conversations/{id}', [\App\Http\Controllers\Api\ChatController::class, 'show']);
+    Route::post('/chat/conversations/{id}/messages', [\App\Http\Controllers\Api\ChatController::class, 'reply']);
+    Route::patch('/chat/conversations/{id}/read', [\App\Http\Controllers\Api\ChatController::class, 'markRead']);
+    Route::patch('/chat/conversations/{id}/close', [\App\Http\Controllers\Api\ChatController::class, 'close']);
+    Route::get('/reviews', [\App\Http\Controllers\Api\ClientReviewController::class, 'index']);
+    Route::post('/reviews', [\App\Http\Controllers\Api\ClientReviewController::class, 'store']);
+    Route::post('/reviews/{clientReview}/respond', [\App\Http\Controllers\Api\ClientReviewController::class, 'respond']);
 
     Route::apiResource('cash-movements', CashMovementController::class);
     Route::apiResource('optimization-records', OptimizationRecordController::class);
@@ -492,6 +549,9 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'throttle:api', EnsureUserCompa
     Route::post('/appointments/{appointment}/change-status', [AppointmentController::class, 'changeStatus']);
     Route::post('/appointments/{appointment}/send-reminder', [AppointmentController::class, 'sendReminder']);
     Route::post('/appointments/{appointment}/confirm', [AppointmentController::class, 'confirm']);
+    Route::post('/appointments/{appointment}/register-payment', [AppointmentController::class, 'registerPayment']);
+    Route::get('/appointments/{appointment}/billing-preview', [AppointmentController::class, 'billingPreview']);
+    Route::post('/appointments/{appointment}/issue-document', [AppointmentController::class, 'issueDocument']);
     Route::get('/clients/{clientId}/appointments', [AppointmentController::class, 'getByClient']);
     Route::get('/appointments/recurring-series/{seriesId}', [AppointmentController::class, 'getRecurringSeries']);
 

@@ -65,7 +65,10 @@ class PetController extends Controller
             'photos'
         ]);
 
-        $companyId = ScopeHelper::companyId($request) ?? $request->get('company_id');
+        $companyId = ScopeHelper::companyId($request)
+            ?? ($request->user()?->hasRole('super_admin') && $request->filled('company_id')
+                ? (int) $request->company_id
+                : null);
         if ($companyId !== null) {
             $query->where('company_id', $companyId);
         }
