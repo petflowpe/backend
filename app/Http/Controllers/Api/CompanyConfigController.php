@@ -407,6 +407,15 @@ class CompanyConfigController extends Controller
                     'tipo_operacion_default' => 'sometimes|string|max:10',
                     'incluir_leyendas_automaticas' => 'sometimes|boolean',
                     'envio_automatico' => 'sometimes|boolean',
+                    'regimen_tributario' => 'sometimes|string|in:RG,RER,MYPE,RUS',
+                    'ose_provider' => 'sometimes|string|in:sunat,nubefact,facturador,otro',
+                    'ose_config' => 'sometimes|array',
+                    'series' => 'sometimes|array',
+                    'series.factura' => 'sometimes|string|max:4',
+                    'series.boleta' => 'sometimes|string|max:4',
+                    'series.nota_credito' => 'sometimes|string|max:4',
+                    'series.nota_debito' => 'sometimes|string|max:4',
+                    'series.guia_remision' => 'sometimes|string|max:4',
                 ]);
                 
             case 'gre_settings':

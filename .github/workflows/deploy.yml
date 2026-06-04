@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - barco
   repository_dispatch:
     types:
       - deploy-frontend
@@ -159,7 +160,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: petflowpe/frontend
-          ref: main
+          ref: ${{ github.ref_name }}
 
       - name: Configurar Node
         if: env.DEPLOY_FRONTEND == '1'

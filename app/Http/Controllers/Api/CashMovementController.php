@@ -15,6 +15,8 @@ class CashMovementController extends Controller
         $query = CashMovement::with(['company', 'branch', 'user', 'cashSession'])
             ->when($request->filled('company_id'), fn($q) => $q->where('company_id', $request->integer('company_id')))
             ->when($request->filled('branch_id'), fn($q) => $q->where('branch_id', $request->integer('branch_id')))
+            ->when($request->filled('cash_session_id'), fn($q) => $q->where('cash_session_id', $request->integer('cash_session_id')))
+            ->when($request->filled('vehicle_id'), fn($q) => $q->where('vehicle_id', $request->integer('vehicle_id')))
             ->when($request->filled('type'), fn($q) => $q->where('type', $request->get('type')))
             ->when($request->filled('date_from') && $request->filled('date_to'), function ($q) use ($request) {
                 $q->whereBetween('movement_date', [$request->get('date_from'), $request->get('date_to')]);
@@ -35,6 +37,8 @@ class CashMovementController extends Controller
             'company_id' => ['required', 'integer', 'exists:companies,id'],
             'branch_id' => ['nullable', 'integer', 'exists:branches,id'],
             'cash_session_id' => ['nullable', 'integer', 'exists:cash_sessions,id'],
+            'vehicle_id' => ['nullable', 'integer', 'exists:vehicles,id'],
+            'appointment_id' => ['nullable', 'integer', 'exists:appointments,id'],
             'type' => ['required', 'string', 'in:INCOME,EXPENSE'],
             'amount' => ['required', 'numeric', 'min:0.01'],
             'description' => ['required', 'string'],
@@ -47,6 +51,8 @@ class CashMovementController extends Controller
         $movement = CashMovement::create([
             'company_id' => $validated['company_id'],
             'branch_id' => $validated['branch_id'] ?? null,
+            'vehicle_id' => $validated['vehicle_id'] ?? null,
+            'appointment_id' => $validated['appointment_id'] ?? null,
             'user_id' => Auth::id(),
             'cash_session_id' => $validated['cash_session_id'] ?? null,
             'type' => $validated['type'],

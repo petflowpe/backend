@@ -10,8 +10,12 @@ use App\Models\Service;
 use App\Models\CompanyConfiguration;
 use App\Models\Product;
 use App\Models\Client;
+use App\Models\CashMovement;
+use App\Models\CashSession;
 use App\Models\StockMovement;
 use App\Models\Vehicle;
+use Illuminate\Support\Facades\Auth;
+use App\Services\AppointmentBillingService;
 use App\Services\VehicleCoverageService;
 use Illuminate\Support\Str;
 use Illuminate\Http\Request;
@@ -30,15 +34,18 @@ class AppointmentController extends Controller
     public function index(Request $request): JsonResponse
     {
         try {
-            $query = Appointment::with(['client', 'pet', 'vehicle', 'user', 'items.product']);
+            $query = Appointment::with(['client', 'pet', 'vehicle', 'user', 'items.product', 'boleta', 'invoice']);
+
+            $scopedCompanyId = \App\Helpers\ScopeHelper::companyId($request);
+            if ($scopedCompanyId) {
+                $query->where('company_id', $scopedCompanyId);
+            } elseif ($request->user()?->hasRole('super_admin') && $request->filled('company_id')) {
+                $query->where('company_id', (int) $request->company_id);
+            }
 
             // Filtros
             if ($request->has('client_id')) {
                 $query->where('client_id', $request->client_id);
-            }
-
-            if ($request->has('company_id')) {
-                $query->where('company_id', $request->company_id);
             }
 
             if ($request->has('status')) {
@@ -170,7 +177,26 @@ class AppointmentController extends Controller
                 }
             }
 
-            // 2. Validar disponibilidad y cobertura del vehículo (si se asigna vehículo)
+            // 2. Auto-asignar vehículo por cobertura si no se envió
+            if (empty($data['vehicle_id'])) {
+                $clientForCoverage = Client::find($data['client_id']);
+                $districtForCoverage = $data['district'] ?? $clientForCoverage?->distrito;
+                if ($districtForCoverage) {
+                    /** @var VehicleCoverageService $coverageService */
+                    $coverageService = app(VehicleCoverageService::class);
+                    $available = $coverageService->getAvailableVehicles(
+                        (int) $data['company_id'],
+                        $districtForCoverage,
+                        $date,
+                        $data['time']
+                    );
+                    if ($available->isNotEmpty()) {
+                        $data['vehicle_id'] = $available->first()->id;
+                    }
+                }
+            }
+
+            // 3. Validar disponibilidad y cobertura del vehículo (si hay vehículo asignado)
             if (!empty($data['vehicle_id'])) {
                 $vehicle = Vehicle::find($data['vehicle_id']);
                 if ($vehicle) {
@@ -783,6 +809,123 @@ class AppointmentController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Error al obtener serie: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Registrar cobro de cita (visita móvil) sin emitir comprobante SUNAT aún.
+     */
+    public function billingPreview(Appointment $appointment, AppointmentBillingService $billing): JsonResponse
+    {
+        try {
+            return response()->json([
+                'success' => true,
+                'data' => $billing->preview($appointment->load(['client', 'pet', 'items', 'boleta', 'invoice'])),
+            ]);
+        } catch (Exception $e) {
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 422);
+        }
+    }
+
+    public function issueDocument(Request $request, Appointment $appointment, AppointmentBillingService $billing): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'tipo' => 'nullable|in:auto,01,03',
+            'serie' => 'nullable|string|max:4',
+            'send_to_sunat' => 'nullable|boolean',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json(['success' => false, 'errors' => $validator->errors()], 422);
+        }
+
+        try {
+            $result = $billing->issue($appointment, [
+                'tipo' => $request->input('tipo', 'auto'),
+                'serie' => $request->input('serie'),
+                'send_to_sunat' => $request->boolean('send_to_sunat'),
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => ($result['tipo_documento'] === '01' ? 'Factura' : 'Boleta') . ' emitida: ' . $result['numero_completo'],
+                'data' => $result,
+            ], 201);
+        } catch (Exception $e) {
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 422);
+        }
+    }
+
+    public function registerPayment(Request $request, Appointment $appointment): JsonResponse
+    {
+        try {
+            $validator = Validator::make($request->all(), [
+                'payment_method' => 'required|string|in:Efectivo,Tarjeta,Yape,Plin,Transferencia',
+                'amount' => 'nullable|numeric|min:0.01',
+                'cash_session_id' => 'nullable|integer|exists:cash_sessions,id',
+                'reference' => 'nullable|string|max:100',
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json(['success' => false, 'errors' => $validator->errors()], 422);
+            }
+
+            if ($appointment->payment_status === 'Pagado') {
+                return response()->json(['success' => false, 'message' => 'La cita ya está pagada'], 409);
+            }
+
+            if (!in_array($appointment->status, ['Completada', 'En Proceso', 'Confirmada'], true)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Solo se puede cobrar citas confirmadas, en proceso o completadas',
+                ], 422);
+            }
+
+            $amount = (float) ($request->input('amount') ?? $appointment->total);
+            $method = $request->input('payment_method');
+            $cashSessionId = $request->input('cash_session_id');
+
+            DB::transaction(function () use ($appointment, $amount, $method, $cashSessionId, $request) {
+                $appointment->update([
+                    'payment_status' => 'Pagado',
+                    'payment_method' => $method,
+                    'status' => $appointment->status === 'Confirmada' ? 'Completada' : $appointment->status,
+                ]);
+
+                $session = $cashSessionId
+                    ? CashSession::where('id', $cashSessionId)->where('status', 'OPEN')->first()
+                    : null;
+
+                CashMovement::create([
+                    'company_id' => $appointment->company_id,
+                    'branch_id' => $appointment->branch_id,
+                    'vehicle_id' => $appointment->vehicle_id,
+                    'appointment_id' => $appointment->id,
+                    'user_id' => Auth::id(),
+                    'cash_session_id' => $session?->id,
+                    'type' => 'INCOME',
+                    'amount' => $amount,
+                    'description' => 'Cobro cita #' . $appointment->id . ' — ' . ($appointment->service_name ?: 'Servicio'),
+                    'payment_method' => $method,
+                    'reference' => $request->input('reference'),
+                    'movement_date' => now(),
+                    'metadata' => [
+                        'appointment_id' => $appointment->id,
+                        'tracking_code' => $appointment->tracking_code,
+                    ],
+                ]);
+            });
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Cobro registrado',
+                'data' => $appointment->fresh()->load(['client', 'pet', 'vehicle']),
+            ]);
+        } catch (Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al registrar cobro: ' . $e->getMessage(),
             ], 500);
         }
     }

@@ -7,7 +7,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class RouteStop extends Model
 {
-    protected $fillable = ['route_id', 'client_id', 'order'];
+    protected $fillable = ['route_id', 'client_id', 'appointment_id', 'order'];
 
     protected $casts = ['order' => 'integer'];
 
@@ -19,5 +19,10 @@ class RouteStop extends Model
     public function client(): BelongsTo
     {
         return $this->belongsTo(Client::class);
+    }
+
+    public function appointment(): BelongsTo
+    {
+        return $this->belongsTo(Appointment::class);
     }
 }
