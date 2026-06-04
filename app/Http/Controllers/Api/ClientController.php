@@ -119,6 +119,8 @@ class ClientController extends Controller
                 'pets.*.next_vaccination_date' => 'nullable|date',
                 'pets.*.last_deworming_date' => 'nullable|date',
                 'pets.*.next_deworming_date' => 'nullable|date',
+                'pets.*.last_flea_treatment_date' => 'nullable|date',
+                'pets.*.next_flea_treatment_date' => 'nullable|date',
             ];
 
             $validator = Validator::make($request->all(), $rules);
@@ -233,6 +235,8 @@ class ClientController extends Controller
                             'next_vaccination_date' => $petRow['next_vaccination_date'] ?? null,
                             'last_deworming_date' => $petRow['last_deworming_date'] ?? null,
                             'next_deworming_date' => $petRow['next_deworming_date'] ?? null,
+                            'last_flea_treatment_date' => $petRow['last_flea_treatment_date'] ?? null,
+                            'next_flea_treatment_date' => $petRow['next_flea_treatment_date'] ?? null,
                         ];
                         Pet::create($petData);
                     }
