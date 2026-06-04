@@ -192,6 +192,8 @@ class PetController extends Controller
                 'next_vaccination_date' => 'nullable|date',
                 'last_deworming_date' => 'nullable|date',
                 'next_deworming_date' => 'nullable|date',
+                'last_flea_treatment_date' => 'nullable|date',
+                'next_flea_treatment_date' => 'nullable|date',
                 'insurance_company' => 'nullable|string|max:255',
                 'insurance_policy_number' => 'nullable|string|max:100',
                 'emergency_contact_name' => 'nullable|string|max:255',
@@ -324,6 +326,8 @@ class PetController extends Controller
                 'next_vaccination_date' => 'nullable|date',
                 'last_deworming_date' => 'nullable|date',
                 'next_deworming_date' => 'nullable|date',
+                'last_flea_treatment_date' => 'nullable|date',
+                'next_flea_treatment_date' => 'nullable|date',
                 'insurance_company' => 'nullable|string|max:255',
                 'insurance_policy_number' => 'nullable|string|max:100',
                 'emergency_contact_name' => 'nullable|string|max:255',
@@ -721,19 +725,29 @@ class PetController extends Controller
                             $d = $d->addYear();
                         }
                     }
-                    if ($d->lt($today) || $d->gt($to)) return;
+                    $daysUntil = (int) $today->diffInDays($d, false);
+                    if ($kind !== 'birthday' && $daysUntil < -30) {
+                        return;
+                    }
+                    if ($daysUntil > (int) $today->diffInDays($to, false)) {
+                        return;
+                    }
+                    $severity = $daysUntil < 0
+                        ? 'overdue'
+                        : ($today->eq($d) ? 'today' : ($daysUntil <= 7 ? 'soon' : 'upcoming'));
                     $items[] = [
                         'type' => $kind,
                         'pet_id' => $pet->id,
                         'pet_name' => trim(($pet->name ?? '') . ' ' . ($pet->last_name ?? '')),
                         'owner_name' => $ownerName,
                         'due_date' => $d->toDateString(),
-                        'days_until' => $today->diffInDays($d, false),
-                        'severity' => $today->eq($d) ? 'today' : ($today->diffInDays($d, false) <= 7 ? 'soon' : 'upcoming'),
+                        'days_until' => $daysUntil,
+                        'severity' => $severity,
                     ];
                 };
                 $push('vaccination', $pet->next_vaccination_date);
                 $push('deworming', $pet->next_deworming_date);
+                $push('flea_treatment', $pet->next_flea_treatment_date);
                 $push('birthday', $pet->birth_date);
             }
             usort($items, fn ($a, $b) => strcmp($a['due_date'], $b['due_date']));
