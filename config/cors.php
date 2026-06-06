@@ -29,6 +29,8 @@ return [
         'https://petflow.com',
         'https://www.petflow.com',
         'https://api.petflow.com',
+        'https://srv1197160.hstgr.cloud',
+        'http://srv1197160.hstgr.cloud',
         // Añade aquí tu dominio de Vercel si usas uno personalizado, ej:
         // 'https://tu-dominio.vercel.app',
     ],

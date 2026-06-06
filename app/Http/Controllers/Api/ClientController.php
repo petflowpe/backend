@@ -732,7 +732,8 @@ class ClientController extends Controller
 
         $note = trim((string) $request->reason);
         if ($note !== '') {
-            $prefix = "[Fidelización {$delta >= 0 ? '+' : ''}{$delta}] ";
+            $sign = $delta >= 0 ? '+' : '';
+            $prefix = "[Fidelización {$sign}{$delta}] ";
             $client->update([
                 'notas' => trim($prefix . $note . "\n" . ($client->notas ?? '')),
             ]);

@@ -104,21 +104,23 @@ jobs:
             echo "Seeders omitidos."
           fi
 
-          echo "Limpiando cache..."
-          php artisan config:clear
-          php artisan route:clear
-          php artisan view:clear
-          php artisan cache:clear
-
-          echo "Generando cache de produccion (sin route:cache por rutas con closures)..."
-          php artisan config:cache
-          php artisan view:cache
-          php artisan event:cache 2>/dev/null || true
-
           echo "Ajustando permisos de storage..."
           mkdir -p storage/framework/cache storage/framework/sessions storage/framework/views storage/logs bootstrap/cache
           chmod -R ug+rwx storage bootstrap/cache 2>/dev/null || true
           sudo chown -R "$USER":www-data storage bootstrap/cache 2>/dev/null || true
+
+          echo "Limpiando cache..."
+          php artisan config:clear
+          php artisan route:clear
+          php artisan cache:clear
+          php artisan view:clear 2>/dev/null || true
+
+          echo "Generando cache de produccion (sin route:cache por rutas con closures)..."
+          php artisan config:cache
+          if [ -d resources/views ]; then
+            php artisan view:cache 2>/dev/null || true
+          fi
+          php artisan event:cache 2>/dev/null || true
 
           echo "Deploy backend completado"
           REMOTE_SCRIPT
