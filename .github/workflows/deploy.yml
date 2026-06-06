@@ -127,15 +127,9 @@ jobs:
 
   deploy-frontend:
     runs-on: ubuntu-latest
-    needs: deploy-backend
-    if: |
-      always() && (
-        github.event_name == 'repository_dispatch' ||
-        (
-          (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
-          needs.deploy-backend.result == 'success'
-        )
-      )
+    # Solo cuando el repo frontend dispara repository_dispatch (petflowpe/frontend).
+    # Un push al backend NO debe compilar ni publicar el frontend.
+    if: github.event_name == 'repository_dispatch'
     env:
       SSH_HOST: ${{ secrets.SSH_HOST }}
       SSH_USER: ${{ secrets.SSH_USER }}
@@ -177,7 +171,7 @@ jobs:
           VITE_API_URL: ${{ secrets.VITE_API_URL }}
           VITE_SENTRY_DSN: ${{ secrets.VITE_SENTRY_DSN }}
         run: |
-          export VITE_API_URL="${VITE_API_URL:-https://api.petflow.com/api}"
+          export VITE_API_URL="${VITE_API_URL:-https://srv1197160.hstgr.cloud/api}"
           npm ci
           npm run build
 
