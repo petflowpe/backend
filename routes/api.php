@@ -126,6 +126,8 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'throttle:api', EnsureUserCompa
     Route::post('/users', [UserController::class, 'store']);
     Route::put('/users/{id}', [UserController::class, 'update']);
     Route::delete('/users/{id}', [UserController::class, 'destroy']);
+    Route::post('/users/{id}/reset-password', [UserController::class, 'resetPassword']);
+    Route::post('/users/{id}/revoke-tokens', [UserController::class, 'revokeTokens']);
 
     // Perfil y configuración del usuario autenticado
     Route::get('/profile', [ProfileController::class, 'show']);

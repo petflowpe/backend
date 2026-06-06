@@ -79,15 +79,55 @@ class AuthController extends Controller
 
     /**
      * Login - Autenticación
+     *
+     * Acepta cualquiera de estas combinaciones en el body:
+     *   - { email, password }
+     *   - { document_number, password }                (busca por document_number)
+     *   - { document_type, document_number, password } (busca por par tipo+número)
+     *   - { identifier, password }                     (autodetecta: si contiene @ → email, si no → documento)
      */
     public function login(Request $request)
     {
         $request->validate([
-            'email' => 'required|email',
+            'email' => 'nullable|email',
+            'document_type' => 'nullable|in:DNI,CE,RUC,PASS',
+            'document_number' => 'nullable|string|max:30',
+            'identifier' => 'nullable|string|max:255',
             'password' => 'required',
         ]);
 
-        $user = User::where('email', $request->email)->first();
+        $identifier = trim((string) $request->input('identifier', ''));
+        $email = trim((string) $request->input('email', ''));
+        $docNumber = trim((string) $request->input('document_number', ''));
+        $docType = $request->input('document_type');
+
+        // Autodetectar a partir de `identifier` si vino sin email/documento.
+        if ($email === '' && $docNumber === '' && $identifier !== '') {
+            if (str_contains($identifier, '@')) {
+                $email = $identifier;
+            } else {
+                $docNumber = $identifier;
+            }
+        }
+
+        if ($email === '' && $docNumber === '') {
+            return response()->json([
+                'message' => 'Debe proporcionar correo electrónico o número de documento',
+                'status' => 'error',
+            ], 422);
+        }
+
+        $query = User::query();
+        if ($email !== '') {
+            $query->where('email', $email);
+        } else {
+            $query->where('document_number', $docNumber);
+            if ($docType) {
+                $query->where('document_type', $docType);
+            }
+        }
+
+        $user = $query->first();
 
         if (!$user || !Hash::check($request->password, $user->password)) {
             return response()->json([
