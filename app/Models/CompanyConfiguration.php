@@ -85,6 +85,7 @@ class CompanyConfiguration extends Model
         'summary_settings' => 'Configuraciones de ResÃºmenes',
         'void_settings' => 'Configuraciones de Bajas',
         'notification_settings' => 'Configuraciones de Notificaciones',
+        'portal_settings' => 'Configuraciones del Portal de Reservas',
         'security_settings' => 'Configuraciones de Seguridad',
     ];
 

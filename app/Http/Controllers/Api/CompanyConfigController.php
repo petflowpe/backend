@@ -58,6 +58,7 @@ class CompanyConfigController extends Controller
                 'gre_settings',
                 'document_settings',
                 'calendar_settings',
+                'portal_settings',
             ];
             
             if (!in_array($section, $validSections)) {
@@ -105,6 +106,7 @@ class CompanyConfigController extends Controller
                 'gre_settings',
                 'document_settings',
                 'calendar_settings',
+                'portal_settings',
             ];
             
             if (!in_array($section, $validSections)) {
@@ -436,6 +438,18 @@ class CompanyConfigController extends Controller
                     'verificacion_automatica' => 'sometimes|boolean',
                 ]);
                 
+            case 'portal_settings':
+                return $request->validate([
+                    'guest_booking_enabled' => 'sometimes|boolean',
+                    'registered_only' => 'sometimes|boolean',
+                    'require_advance' => 'sometimes|boolean',
+                    'advance_type' => 'sometimes|in:percent,fixed',
+                    'advance_value' => 'sometimes|numeric|min:0',
+                    'payment_mode' => 'sometimes|in:simulated,gateway',
+                    'auto_confirm_on_advance' => 'sometimes|boolean',
+                    'new_clients_require_approval' => 'sometimes|boolean',
+                ]);
+
             case 'document_settings':
                 return $request->validate([
                     'generar_xml_automatico' => 'sometimes|boolean',

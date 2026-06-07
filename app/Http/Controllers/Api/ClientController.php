@@ -350,7 +350,9 @@ class ClientController extends Controller
                 'nivel_fidelizacion' => 'nullable|string|in:Bronce,Plata,Oro,VIP',
                 'fecha_ultima_visita' => 'nullable|date',
                 'fecha_registro' => 'nullable|date',
-                'activo' => 'boolean'
+                'activo' => 'boolean',
+                'portal_booking_enabled' => 'sometimes|boolean',
+                'portal_approval_status' => 'sometimes|string|in:pending,approved,rejected',
             ]);
 
             if ($validator->fails()) {

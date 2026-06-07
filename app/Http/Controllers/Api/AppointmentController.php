@@ -16,6 +16,7 @@ use App\Models\StockMovement;
 use App\Models\Vehicle;
 use Illuminate\Support\Facades\Auth;
 use App\Services\AppointmentBillingService;
+use App\Services\PortalBookingService;
 use App\Services\VehicleCoverageService;
 use Illuminate\Support\Str;
 use Illuminate\Http\Request;
@@ -129,6 +130,10 @@ class AppointmentController extends Controller
                 'recurrence_occurrences' => 'nullable|integer|min:1|max:52',
                 'recurrence_days' => 'nullable|array',
                 'recurrence_fixed_time' => 'nullable|boolean',
+                'booking_source' => 'nullable|string|in:staff,portal_auth,public_guest',
+                'advance_paid' => 'nullable|boolean',
+                'advance_payment_method' => 'nullable|string|max:50',
+                'advance_payment_reference' => 'nullable|string|max:100',
             ]);
 
             if ($validator->fails()) {
@@ -256,9 +261,6 @@ class AppointmentController extends Controller
                 $data['client_category'] = $client->nivel_fidelizacion;
             }
 
-            $data['status'] = 'Pendiente';
-            $data['payment_status'] = 'Pendiente';
-
             // Calcular total desde items si existen, sino usar price del request
             $items = $request->input('items', []);
             if (!empty($items)) {
@@ -272,6 +274,49 @@ class AppointmentController extends Controller
             }
 
             $data['total'] = $data['price'] - ($data['discount'] ?? 0);
+
+            /** @var PortalBookingService $portalService */
+            $portalService = app(PortalBookingService::class);
+            $bookingSource = $request->input('booking_source', PortalBookingService::SOURCE_STAFF);
+            $data['booking_source'] = $bookingSource;
+
+            if ($bookingSource === PortalBookingService::SOURCE_PORTAL_AUTH) {
+                $settings = $portalService->getSettings((int) $data['company_id']);
+                $clientForPortal = $client ?? Client::find($data['client_id']);
+                $portalCheck = $portalService->canClientBook($clientForPortal, $settings);
+                if (!$portalCheck['allowed']) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => $portalCheck['message'],
+                    ], 403);
+                }
+
+                $advanceAmount = $portalService->calculateAdvance((float) $data['total'], $settings);
+                $data['advance_amount'] = $advanceAmount;
+                $advancePaid = $request->boolean('advance_paid', false);
+                $resolved = $portalService->resolveStatusForPortalBooking(
+                    $clientForPortal,
+                    $settings,
+                    $advancePaid,
+                    $advanceAmount
+                );
+                $data['status'] = $resolved['status'];
+                $data['payment_status'] = $resolved['payment_status'];
+                if (!empty($resolved['confirmed_at'])) {
+                    $data['confirmed_at'] = $resolved['confirmed_at'];
+                }
+                if ($advancePaid) {
+                    $data['advance_paid_at'] = now();
+                    $data['advance_payment_method'] = $request->input('advance_payment_method', 'Tarjeta');
+                    $data['advance_payment_reference'] = $request->input('advance_payment_reference');
+                }
+                if (empty($data['tracking_code'])) {
+                    $data['tracking_code'] = $portalService->generateTrackingCode();
+                }
+            } else {
+                $data['status'] = 'Pendiente';
+                $data['payment_status'] = 'Pendiente';
+            }
 
             $appointments = [];
             $is_recurring = $request->input('is_recurring', false);
@@ -329,11 +374,20 @@ class AppointmentController extends Controller
 
                 DB::commit();
 
+                $createdAppointment = $is_recurring ? $appointments[0] : $appointment;
+                if ($bookingSource === PortalBookingService::SOURCE_PORTAL_AUTH && $createdAppointment) {
+                    $createdAppointment->load(['client', 'pet']);
+                    $event = $createdAppointment->status === 'Pendiente' ? 'pending_approval' : 'created';
+                    $portalService->notifyStaffPortalBooking($createdAppointment, $event);
+                }
+
                 return response()->json([
                     'success' => true,
                     'message' => $is_recurring ? 'Serie de citas creada exitosamente' : 'Cita creada exitosamente',
                     'data' => $is_recurring ? $appointments[0]->load(['client', 'pet', 'vehicle', 'user']) : $appointment->load(['client', 'pet', 'vehicle', 'user']),
-                    'series_count' => count($appointments)
+                    'series_count' => count($appointments),
+                    'advance_amount' => $createdAppointment?->advance_amount,
+                    'tracking_code' => $createdAppointment?->tracking_code,
                 ], 201);
 
             } catch (Exception $e) {
@@ -858,6 +912,76 @@ class AppointmentController extends Controller
             ], 201);
         } catch (Exception $e) {
             return response()->json(['success' => false, 'message' => $e->getMessage()], 422);
+        }
+    }
+
+    /**
+     * Registrar adelanto simulado de reserva portal (Fase 1).
+     */
+    public function payAdvance(Request $request, Appointment $appointment): JsonResponse
+    {
+        try {
+            $validator = Validator::make($request->all(), [
+                'payment_method' => 'required|string|in:Tarjeta,Yape,Plin,Transferencia,Efectivo',
+                'reference' => 'nullable|string|max:100',
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Errores de validación',
+                    'errors' => $validator->errors(),
+                ], 422);
+            }
+
+            if ($appointment->booking_source !== PortalBookingService::SOURCE_PORTAL_AUTH) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Solo aplica a citas creadas desde el portal autenticado',
+                ], 422);
+            }
+
+            if ($appointment->advance_paid_at) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'El adelanto ya fue registrado',
+                ], 409);
+            }
+
+            /** @var PortalBookingService $portalService */
+            $portalService = app(PortalBookingService::class);
+            $settings = $portalService->getSettings((int) $appointment->company_id);
+            $advanceAmount = (float) ($appointment->advance_amount ?? 0);
+
+            if ($advanceAmount <= 0) {
+                $advanceAmount = $portalService->calculateAdvance((float) $appointment->total, $settings);
+                $appointment->advance_amount = $advanceAmount;
+                $appointment->save();
+            }
+
+            $updated = $portalService->applyAdvancePayment(
+                $appointment,
+                $request->input('payment_method'),
+                $request->input('reference')
+            );
+
+            return response()->json([
+                'success' => true,
+                'message' => $updated->status === 'Confirmada'
+                    ? 'Adelanto registrado. Tu cita fue confirmada.'
+                    : 'Adelanto registrado. El equipo validará tu cita.',
+                'data' => $updated->load(['client', 'pet', 'vehicle']),
+            ]);
+        } catch (Exception $e) {
+            Log::error('Error al registrar adelanto portal', [
+                'appointment_id' => $appointment->id,
+                'error' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al registrar adelanto: ' . $e->getMessage(),
+            ], 500);
         }
     }
 

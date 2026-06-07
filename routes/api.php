@@ -552,6 +552,7 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'throttle:api', EnsureUserCompa
     Route::post('/appointments/{appointment}/send-reminder', [AppointmentController::class, 'sendReminder']);
     Route::post('/appointments/{appointment}/confirm', [AppointmentController::class, 'confirm']);
     Route::post('/appointments/{appointment}/register-payment', [AppointmentController::class, 'registerPayment']);
+    Route::post('/appointments/{appointment}/pay-advance', [AppointmentController::class, 'payAdvance']);
     Route::get('/appointments/{appointment}/billing-preview', [AppointmentController::class, 'billingPreview']);
     Route::post('/appointments/{appointment}/issue-document', [AppointmentController::class, 'issueDocument']);
     Route::get('/clients/{clientId}/appointments', [AppointmentController::class, 'getByClient']);

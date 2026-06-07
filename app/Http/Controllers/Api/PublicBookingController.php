@@ -9,6 +9,7 @@ use App\Models\CompanyConfiguration;
 use App\Models\Pet;
 use App\Models\Service;
 use App\Models\Vehicle;
+use App\Services\PortalBookingService;
 use App\Services\VehicleCoverageService;
 use Carbon\Carbon;
 use Exception;
@@ -39,11 +40,16 @@ class PublicBookingController extends Controller
             $workingHours = $config->config_data['working_hours'];
         }
 
+        /** @var PortalBookingService $portalService */
+        $portalService = app(PortalBookingService::class);
+        $portalSettings = $portalService->getSettings($companyId);
+
         return response()->json([
             'success' => true,
             'data' => [
                 'company_id' => $companyId,
                 'working_hours' => $workingHours,
+                'portal_settings' => $portalSettings,
             ],
         ]);
     }
@@ -202,6 +208,17 @@ class PublicBookingController extends Controller
 
         $payload = $validator->validated();
         $companyId = $this->publicCompanyId();
+
+        /** @var PortalBookingService $portalService */
+        $portalService = app(PortalBookingService::class);
+        $portalSettings = $portalService->getSettings($companyId);
+        if (empty($portalSettings['guest_booking_enabled'])) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Las reservas sin cuenta están deshabilitadas. Inicia sesión en el portal de clientes.',
+            ], 403);
+        }
+
         $clientInput = $payload['client'];
         $petInput = $payload['pet'];
         $aptInput = $payload['appointment'];
@@ -260,6 +277,7 @@ class PublicBookingController extends Controller
             $price = (float) $aptInput['price'];
             $appointment = Appointment::create([
                 'tracking_code' => $this->generateTrackingCode(),
+                'booking_source' => PortalBookingService::SOURCE_PUBLIC_GUEST,
                 'client_id' => $client->id,
                 'pet_id' => $pet->id,
                 'company_id' => $companyId,
@@ -285,6 +303,9 @@ class PublicBookingController extends Controller
             ]);
 
             DB::commit();
+
+            $appointment->load(['client', 'pet']);
+            $portalService->notifyStaffPortalBooking($appointment, 'pending_approval');
 
             return response()->json([
                 'success' => true,
