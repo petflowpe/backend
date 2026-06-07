@@ -30,6 +30,7 @@ use App\Models\Notification;
 use App\Models\Payment;
 use App\Models\Pet;
 use App\Models\Product;
+use App\Models\Route;
 use App\Models\Role;
 use App\Models\Supplier;
 use App\Models\Unit;
@@ -191,6 +192,13 @@ function bootstrapTwoTenants(): array
             'name' => 'Zona ' . $cId,
             'active' => 1,
         ],
+        'routes' => fn ($cId) => [
+            'company_id' => $cId,
+            'name' => 'Ruta ' . $cId,
+            'date' => now()->toDateString(),
+            'status' => 'planned',
+            'auto_optimize' => 0,
+        ],
         'payments' => fn ($cId) => [
             'company_id' => $cId,
             'amount' => 100,
@@ -245,6 +253,7 @@ test('global scope aisla todos los modelos multi-tenant criticos', function () {
         Boleta::class,
         Area::class,
         Zone::class,
+        Route::class,
         Payment::class,
         Notification::class,
     ];
