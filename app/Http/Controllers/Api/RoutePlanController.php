@@ -2,15 +2,11 @@
 
 namespace App\Http\Controllers\Api;
 
-use App\Helpers\ScopeHelper;
 use App\Http\Controllers\Controller;
 use App\Models\Appointment;
-use App\Models\Client;
 use App\Models\Route as RouteModel;
 use App\Models\RouteStop;
 use App\Models\Vehicle;
-use App\Models\Zone;
-use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -19,51 +15,14 @@ use Exception;
 
 class RoutePlanController extends Controller
 {
-    private function resolveCompanyId(Request $request): ?int
+    private function resolveCompanyId(Request $request): int
     {
-        $id = ScopeHelper::companyId($request) ?? $request->user()?->company_id;
-
-        return $id !== null ? (int) $id : null;
-    }
-
-    private function requireCompanyId(Request $request): int
-    {
-        $companyId = $this->resolveCompanyId($request);
-        if (!$companyId) {
-            abort(422, 'company_id es requerido o el usuario debe tener empresa asignada.');
-        }
-
-        return $companyId;
-    }
-
-    private function assertZoneBelongsToCompany(?int $zoneId, int $companyId): void
-    {
-        if (!$zoneId) {
-            return;
-        }
-        $zone = Zone::find($zoneId);
-        if (!$zone || (int) $zone->company_id !== $companyId) {
-            abort(422, 'La zona no pertenece a la empresa.');
-        }
-    }
-
-    private function assertVehicleBelongsToCompany(?int $vehicleId, int $companyId): void
-    {
-        if (!$vehicleId) {
-            return;
-        }
-        $vehicle = Vehicle::find($vehicleId);
-        if (!$vehicle || (int) $vehicle->company_id !== $companyId) {
-            abort(422, 'El vehículo no pertenece a la empresa.');
-        }
-    }
-
-    private function assertClientBelongsToCompany(int $clientId, int $companyId): void
-    {
-        $client = Client::find($clientId);
-        if (!$client || (int) $client->company_id !== $companyId) {
-            abort(422, 'El cliente no pertenece a la empresa.');
-        }
+        return (int) (
+            $request->integer('company_id')
+            ?: \App\Helpers\ScopeHelper::companyId($request)
+            ?: $request->user()?->company_id
+            ?: 1
+        );
     }
 
     private function formatAppointmentStop(Appointment $apt, int $order): array
@@ -104,7 +63,9 @@ class RoutePlanController extends Controller
     public function index(Request $request): JsonResponse
     {
         try {
+            $companyId = $this->resolveCompanyId($request);
             $query = RouteModel::with(['zone', 'vehicle', 'stops.client', 'stops.appointment.pet'])
+                ->where('company_id', $companyId)
                 ->orderByDesc('date')
                 ->orderByDesc('id');
 
@@ -151,7 +112,7 @@ class RoutePlanController extends Controller
             'company_id' => 'nullable|integer|exists:companies,id',
         ]);
 
-        $companyId = $this->requireCompanyId($request);
+        $companyId = $this->resolveCompanyId($request);
         $date = $validated['date'] ?? now()->toDateString();
         $vehicleId = (int) $validated['vehicle_id'];
 
@@ -212,7 +173,7 @@ class RoutePlanController extends Controller
         }
 
         $date = $request->input('date', now()->toDateString());
-        $companyId = $this->requireCompanyId($request);
+        $companyId = $this->resolveCompanyId($request);
 
         $vehicle = Vehicle::query()
             ->where('company_id', $companyId)
@@ -254,20 +215,20 @@ class RoutePlanController extends Controller
             'appointment_ids.*' => 'integer|exists:appointments,id',
         ]);
 
-        $companyId = $this->requireCompanyId($request);
+        $companyId = $this->resolveCompanyId($request);
         $vehicleId = (int) $validated['vehicle_id'];
         $date = $validated['date'];
 
         try {
             DB::beginTransaction();
 
-            $vehicle = Vehicle::where('company_id', $companyId)->findOrFail($vehicleId);
-
             $route = RouteModel::query()
                 ->where('company_id', $companyId)
                 ->where('vehicle_id', $vehicleId)
                 ->whereDate('date', $date)
                 ->first();
+
+            $vehicle = Vehicle::find($vehicleId);
             $routeName = $validated['name'] ?? ('Ruta ' . ($vehicle?->name ?? $vehicleId) . ' ' . $date);
 
             if ($route) {
@@ -306,13 +267,6 @@ class RoutePlanController extends Controller
                 'message' => 'Ruta guardada correctamente',
                 'data' => $route,
             ]);
-        } catch (ModelNotFoundException $e) {
-            DB::rollBack();
-
-            return response()->json([
-                'success' => false,
-                'message' => 'Recurso no encontrado',
-            ], 404);
         } catch (Exception $e) {
             DB::rollBack();
             Log::error('Error guardar ruta desde citas', ['error' => $e->getMessage()]);
@@ -341,13 +295,9 @@ class RoutePlanController extends Controller
             'stops.*.appointment_id' => 'nullable|integer|exists:appointments,id',
             'stops.*.order' => 'nullable|integer|min:0',
         ]);
-        $companyId = $this->requireCompanyId($request);
-        $this->assertZoneBelongsToCompany($validated['zone_id'] ?? null, $companyId);
-        $this->assertVehicleBelongsToCompany($validated['vehicle_id'] ?? null, $companyId);
-        if (!empty($validated['stops'])) {
-            foreach ($validated['stops'] as $stop) {
-                $this->assertClientBelongsToCompany((int) $stop['client_id'], $companyId);
-            }
+        $companyId = $this->resolveCompanyId($request);
+        if (!$companyId) {
+            return response()->json(['message' => 'company_id es requerido o el usuario debe tener empresa asignada.'], 422);
         }
         $route = RouteModel::create([
             'company_id' => $companyId,
@@ -382,11 +332,6 @@ class RoutePlanController extends Controller
 
     public function update(Request $request, RouteModel $route): JsonResponse
     {
-        $companyId = $this->requireCompanyId($request);
-        if ((int) $route->company_id !== $companyId) {
-            abort(404);
-        }
-
         $validated = $request->validate([
             'zone_id' => 'nullable|integer|exists:zones,id',
             'vehicle_id' => 'nullable|integer|exists:vehicles,id',
@@ -401,14 +346,6 @@ class RoutePlanController extends Controller
             'stops.*.appointment_id' => 'nullable|integer|exists:appointments,id',
             'stops.*.order' => 'nullable|integer|min:0',
         ]);
-        $this->assertZoneBelongsToCompany($validated['zone_id'] ?? null, $companyId);
-        $this->assertVehicleBelongsToCompany($validated['vehicle_id'] ?? null, $companyId);
-        if (array_key_exists('stops', $validated)) {
-            foreach ($validated['stops'] ?? [] as $stop) {
-                $this->assertClientBelongsToCompany((int) $stop['client_id'], $companyId);
-            }
-        }
-
         $route->update(array_filter([
             'zone_id' => $validated['zone_id'] ?? null,
             'vehicle_id' => $validated['vehicle_id'] ?? null,

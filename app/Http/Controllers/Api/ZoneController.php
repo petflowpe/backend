@@ -2,7 +2,6 @@
 
 namespace App\Http\Controllers\Api;
 
-use App\Helpers\ScopeHelper;
 use App\Http\Controllers\Controller;
 use App\Models\Zone;
 use Illuminate\Http\JsonResponse;
@@ -15,16 +14,15 @@ class ZoneController extends Controller
     public function index(Request $request): JsonResponse
     {
         try {
-            $query = Zone::query()->orderBy('name');
+            $companyId = $request->integer('company_id', 1);
+            $query = Zone::where('company_id', $companyId)->orderBy('name');
             if ($request->boolean('only_active', false)) {
                 $query->where('active', true);
             }
             $zones = $query->get();
-
             return response()->json(['success' => true, 'data' => $zones]);
         } catch (Exception $e) {
             Log::error('Error listar zonas', ['error' => $e->getMessage()]);
-
             return response()->json(['success' => false, 'message' => $e->getMessage()], 500);
         }
     }
@@ -41,15 +39,11 @@ class ZoneController extends Controller
             'coordinates' => 'nullable|array',
             'active' => 'boolean',
         ]);
-
-        $companyId = ScopeHelper::companyId($request) ?? $request->user()?->company_id;
-        if (empty($companyId)) {
+        $validated['company_id'] = $validated['company_id'] ?? \App\Helpers\ScopeHelper::companyId($request) ?? $request->user()?->company_id;
+        if (empty($validated['company_id'])) {
             return response()->json(['message' => 'company_id es requerido o el usuario debe tener empresa asignada.'], 422);
         }
-
-        $validated['company_id'] = $companyId;
         $zone = Zone::create($validated);
-
         return response()->json(['success' => true, 'data' => $zone], 201);
     }
 
@@ -70,14 +64,12 @@ class ZoneController extends Controller
             'active' => 'boolean',
         ]);
         $zone->update($validated);
-
         return response()->json(['success' => true, 'data' => $zone->fresh()]);
     }
 
     public function destroy(Zone $zone): JsonResponse
     {
         $zone->delete();
-
         return response()->json(['success' => true, 'message' => 'Zona eliminada']);
     }
 }
