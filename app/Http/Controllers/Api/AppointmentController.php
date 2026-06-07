@@ -718,6 +718,8 @@ class AppointmentController extends Controller
                 'data' => $appointment
             ]);
 
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            throw $e;
         } catch (Exception $e) {
             return response()->json([
                 'success' => false,
@@ -755,6 +757,8 @@ class AppointmentController extends Controller
                 'data' => $appointment->load(['client', 'pet', 'vehicle', 'user', 'items.product'])
             ]);
 
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            throw $e;
         } catch (Exception $e) {
             return response()->json([
                 'success' => false,

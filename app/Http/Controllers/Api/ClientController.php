@@ -140,9 +140,21 @@ class ClientController extends Controller
             unset($data['pets']);
 
             if (empty($data['company_id'])) {
-                $data['company_id'] = 1;
+                $data['company_id'] = \App\Helpers\ScopeHelper::companyId($request);
             }
-            $companyId = $data['company_id'];
+            if (empty($data['company_id']) && $request->user()?->hasRole('super_admin')) {
+                $activeCompanyIds = Company::where('activo', true)->pluck('id');
+                if ($activeCompanyIds->count() === 1) {
+                    $data['company_id'] = $activeCompanyIds->first();
+                }
+            }
+            if (empty($data['company_id'])) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'No se pudo determinar la empresa del cliente. Indique company_id.',
+                ], 422);
+            }
+            $companyId = (int) $data['company_id'];
 
             // Si se proporciona company_id, verificar que la empresa existe y está activa
             if ($companyId) {
