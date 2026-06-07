@@ -25,6 +25,7 @@ class CompanyConfigController extends Controller
     {
         try {
             $company = Company::findOrFail($companyId);
+            $this->authorize('view', $company);
             
             $includeCache = $request->boolean('use_cache', true);
             $config = $this->configService->getCompanyConfiguration($company, $includeCache);
@@ -35,6 +36,8 @@ class CompanyConfigController extends Controller
                 'message' => 'Configuración obtenida correctamente'
             ]);
             
+        } catch (\Illuminate\Auth\Access\AuthorizationException $e) {
+            throw $e;
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
@@ -66,6 +69,7 @@ class CompanyConfigController extends Controller
             }
             
             $company = Company::findOrFail($companyId);
+            $this->authorize('view', $company);
             $config = $section === 'calendar_settings'
                 ? $company->getCalendarConfig()
                 : $company->getConfig($section, null, null, []);
@@ -79,6 +83,8 @@ class CompanyConfigController extends Controller
                 'message' => "Configuración de {$section} obtenida correctamente"
             ]);
             
+        } catch (\Illuminate\Auth\Access\AuthorizationException $e) {
+            throw $e;
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
@@ -110,7 +116,8 @@ class CompanyConfigController extends Controller
             }
             
             $company = Company::findOrFail($companyId);
-            
+            $this->authorize('update', $company);
+
             // Validar datos de entrada según la sección
             $validatedData = $section === 'calendar_settings'
                 ? $request->validate([
@@ -165,6 +172,8 @@ class CompanyConfigController extends Controller
                 ], 500);
             }
             
+        } catch (\Illuminate\Auth\Access\AuthorizationException $e) {
+            throw $e;
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,

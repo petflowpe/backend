@@ -15,18 +15,39 @@ use Exception;
 class CompanyController extends Controller
 {
     /**
-     * Listar todas las empresas
+     * Listar empresas (scope multi-tenant).
+     * - super_admin: todas (activas por defecto; ?include_inactive=1 para ver inactivas).
+     * - company_admin: solo su empresa.
      */
-    public function index(): JsonResponse
+    public function index(Request $request): JsonResponse
     {
         try {
-            $companies = Company::active()
-                ->with(['branches'])
+            $user = $request->user();
+            $this->authorize('viewAny', Company::class);
+
+            $query = Company::query()->with(['branches']);
+
+            if ($user->hasRole('super_admin')) {
+                if (!$request->boolean('include_inactive')) {
+                    $query->active();
+                }
+            } else {
+                if (!$user->company_id) {
+                    return response()->json([
+                        'success' => true,
+                        'data' => [],
+                        'meta' => ['total' => 0, 'active_count' => 0, 'production_count' => 0],
+                    ]);
+                }
+                $query->where('id', (int) $user->company_id);
+            }
+
+            $companies = $query
                 ->select([
-                    'id', 'ruc', 'razon_social', 'nombre_comercial', 
+                    'id', 'ruc', 'razon_social', 'nombre_comercial',
                     'direccion', 'distrito', 'provincia', 'departamento',
                     'email', 'telefono', 'modo_produccion', 'activo',
-                    'created_at', 'updated_at'
+                    'created_at', 'updated_at',
                 ])
                 ->get();
 
@@ -36,12 +57,11 @@ class CompanyController extends Controller
                 'meta' => [
                     'total' => $companies->count(),
                     'active_count' => $companies->where('activo', true)->count(),
-                    'production_count' => $companies->where('modo_produccion', true)->count()
-                ]
+                    'production_count' => $companies->where('modo_produccion', true)->count(),
+                ],
             ]);
-
         } catch (Exception $e) {
-            Log::error("Error al listar empresas", ['error' => $e->getMessage()]);
+            Log::error('Error al listar empresas', ['error' => $e->getMessage()]);
 
             return $this->errorResponse('Error al obtener empresas', $e);
         }
@@ -52,6 +72,7 @@ class CompanyController extends Controller
      */
     public function store(StoreCompanyRequest $request): JsonResponse
     {
+        $this->authorize('create', Company::class);
         try {
             $validatedData = $this->processRequestData($request);
             $company = Company::create($validatedData);
@@ -172,6 +193,7 @@ class CompanyController extends Controller
      */
     public function activate(Company $company): JsonResponse
     {
+        $this->authorize('activate', $company);
         try {
             $company->update(['activo' => true]);
 
@@ -201,6 +223,7 @@ class CompanyController extends Controller
      */
     public function toggleProductionMode(Request $request, Company $company): JsonResponse
     {
+        $this->authorize('toggleProduction', $company);
         try {
             $validator = Validator::make($request->all(), [
                 'modo_produccion' => 'required|boolean'
