@@ -151,12 +151,22 @@ jobs:
           echo "DEPLOY_PATH=$FRONTEND_PATH" >> "$GITHUB_ENV"
           echo "DEPLOY_FRONTEND=1" >> "$GITHUB_ENV"
 
+      - name: Resolver ref del frontend
+        if: env.DEPLOY_FRONTEND == '1'
+        run: |
+          REF="${{ github.event.client_payload.ref }}"
+          if [ -z "$REF" ]; then
+            REF="${{ github.ref_name }}"
+          fi
+          echo "FRONTEND_REF=$REF" >> "$GITHUB_ENV"
+          echo "Desplegando frontend ref: $REF"
+
       - name: Checkout frontend
         if: env.DEPLOY_FRONTEND == '1'
         uses: actions/checkout@v4
         with:
           repository: petflowpe/frontend
-          ref: ${{ github.ref_name }}
+          ref: ${{ env.FRONTEND_REF }}
 
       - name: Configurar Node
         if: env.DEPLOY_FRONTEND == '1'
