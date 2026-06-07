@@ -6,9 +6,10 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
+use App\Models\Concerns\BelongsToCompany;
 class DispatchGuide extends Model
 {
-    use HasFactory;
+    use HasFactory, BelongsToCompany;
 
     protected $fillable = [
         'company_id',
@@ -22,7 +23,7 @@ class DispatchGuide extends Model
         'fecha_traslado',
         'version',
         
-        // Datos del envío
+        // Datos del envÃ­o
         'cod_traslado',
         'des_traslado',
         'mod_traslado',
@@ -30,11 +31,11 @@ class DispatchGuide extends Model
         'und_peso_total',
         'num_bultos',
         
-        // Direcciones (JSON en migración)
+        // Direcciones (JSON en migraciÃ³n)
         'partida',
         'llegada',
         
-        // Transportista y vehículo (JSON en migración)
+        // Transportista y vehÃ­culo (JSON en migraciÃ³n)
         'transportista',
         'vehiculo',
         'indicadores', // Para M1L y otros indicadores especiales
@@ -54,7 +55,7 @@ class DispatchGuide extends Model
         'respuesta_sunat',
         'ticket',
         
-        // Auditoría
+        // AuditorÃ­a
         'usuario_creacion',
     ];
 
@@ -159,13 +160,13 @@ class DispatchGuide extends Model
 
     public function getTipoDocumentoNameAttribute(): string
     {
-        return 'Guía de Remisión Electrónica';
+        return 'GuÃ­a de RemisiÃ³n ElectrÃ³nica';
     }
 
     public function getModalidadTrasladoNameAttribute(): string
     {
         return match($this->mod_traslado) {
-            '01' => 'Transporte público',
+            '01' => 'Transporte pÃºblico',
             '02' => 'Transporte privado',
             default => 'Modalidad no especificada'
         };
@@ -178,14 +179,14 @@ class DispatchGuide extends Model
             '02' => 'Compra',
             '03' => 'Venta con entrega a terceros',
             '04' => 'Traslado entre establecimientos de la misma empresa',
-            '05' => 'Consignación',
-            '06' => 'Devolución',
+            '05' => 'ConsignaciÃ³n',
+            '06' => 'DevoluciÃ³n',
             '07' => 'Recojo de bienes transformados',
-            '08' => 'Importación',
-            '09' => 'Exportación',
+            '08' => 'ImportaciÃ³n',
+            '09' => 'ExportaciÃ³n',
             '13' => 'Otros',
-            '14' => 'Venta sujeta a confirmación del comprador',
-            '18' => 'Traslado de bienes para transformación',
+            '14' => 'Venta sujeta a confirmaciÃ³n del comprador',
+            '18' => 'Traslado de bienes para transformaciÃ³n',
             '19' => 'Traslado de bienes desde un centro de acopio',
             default => $this->des_traslado ?? 'Motivo no especificado'
         };

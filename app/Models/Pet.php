@@ -8,10 +8,11 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
+use App\Models\Concerns\BelongsToCompany;
 class Pet extends Model
 {
     public const MAX_PHOTOS = 5;
-    use HasFactory;
+    use HasFactory, BelongsToCompany;
 
     protected $fillable = [
         'client_id',

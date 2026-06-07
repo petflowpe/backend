@@ -8,9 +8,10 @@ use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
+use App\Models\Concerns\BelongsToCompany;
 class Client extends Model
 {
-    use HasFactory;
+    use HasFactory, BelongsToCompany;
 
     protected $fillable = [
         'company_id',
@@ -111,7 +112,7 @@ class Client extends Model
     {
         return match ($this->tipo_documento) {
             '1' => 'DNI',
-            '4' => 'Carnet de Extranjería',
+            '4' => 'Carnet de ExtranjerÃ­a',
             '6' => 'RUC',
             '0' => 'DOC.TRIB.NO.DOM.SIN.RUC',
             default => 'Desconocido'

@@ -7,9 +7,10 @@ use Illuminate\Database\Eloquent\Model;
 use App\Models\Company;
 use App\Models\Vehicle;
 
+use App\Models\Concerns\BelongsToCompany;
 class OptimizationRecord extends Model
 {
-    use HasFactory;
+    use HasFactory, BelongsToCompany;
 
     protected $fillable = [
         'company_id',

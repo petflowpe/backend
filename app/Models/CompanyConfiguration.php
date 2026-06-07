@@ -6,9 +6,10 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
+use App\Models\Concerns\BelongsToCompany;
 class CompanyConfiguration extends Model
 {
-    use HasFactory;
+    use HasFactory, BelongsToCompany;
 
     protected $fillable = [
         'company_id',
@@ -77,11 +78,11 @@ class CompanyConfiguration extends Model
         'sunat_credentials' => 'Credenciales SUNAT',
         'service_endpoints' => 'Endpoints de Servicios',
         'tax_settings' => 'Configuraciones de Impuestos',
-        'invoice_settings' => 'Configuraciones de Facturación',
-        'gre_settings' => 'Configuraciones de Guías de Remisión',
+        'invoice_settings' => 'Configuraciones de FacturaciÃ³n',
+        'gre_settings' => 'Configuraciones de GuÃ­as de RemisiÃ³n',
         'file_settings' => 'Configuraciones de Archivos',
         'document_settings' => 'Configuraciones de Documentos',
-        'summary_settings' => 'Configuraciones de Resúmenes',
+        'summary_settings' => 'Configuraciones de ResÃºmenes',
         'void_settings' => 'Configuraciones de Bajas',
         'notification_settings' => 'Configuraciones de Notificaciones',
         'security_settings' => 'Configuraciones de Seguridad',
@@ -90,22 +91,22 @@ class CompanyConfiguration extends Model
     const ENVIRONMENTS = [
         'general' => 'General',
         'beta' => 'Beta/Pruebas',
-        'produccion' => 'Producción',
+        'produccion' => 'ProducciÃ³n',
     ];
 
     const SERVICE_TYPES = [
         'general' => 'General',
-        'facturacion' => 'Facturación',
-        'guias_remision' => 'Guías de Remisión',
-        'resumenes_diarios' => 'Resúmenes Diarios',
+        'facturacion' => 'FacturaciÃ³n',
+        'guias_remision' => 'GuÃ­as de RemisiÃ³n',
+        'resumenes_diarios' => 'ResÃºmenes Diarios',
         'comunicaciones_baja' => 'Comunicaciones de Baja',
         'retenciones' => 'Retenciones',
     ];
 
-    // ===================== MÉTODOS HELPER =====================
+    // ===================== MÃ‰TODOS HELPER =====================
 
     /**
-     * Obtener configuración por clave específica
+     * Obtener configuraciÃ³n por clave especÃ­fica
      */
     public function getConfigValue(string $key, $default = null)
     {
@@ -113,7 +114,7 @@ class CompanyConfiguration extends Model
     }
 
     /**
-     * Establecer configuración por clave específica
+     * Establecer configuraciÃ³n por clave especÃ­fica
      */
     public function setConfigValue(string $key, $value): bool
     {
@@ -124,7 +125,7 @@ class CompanyConfiguration extends Model
     }
 
     /**
-     * Verificar si tiene una configuración específica
+     * Verificar si tiene una configuraciÃ³n especÃ­fica
      */
     public function hasConfigValue(string $key): bool
     {
@@ -143,7 +144,7 @@ class CompanyConfiguration extends Model
     }
 
     /**
-     * Obtener nombre legible del tipo de configuración
+     * Obtener nombre legible del tipo de configuraciÃ³n
      */
     public function getConfigTypeName(): string
     {
@@ -167,7 +168,7 @@ class CompanyConfiguration extends Model
     }
 
     /**
-     * Verificar si es configuración de credenciales
+     * Verificar si es configuraciÃ³n de credenciales
      */
     public function isCredentialsConfig(): bool
     {
@@ -175,7 +176,7 @@ class CompanyConfiguration extends Model
     }
 
     /**
-     * Verificar si es configuración de ambiente específico
+     * Verificar si es configuraciÃ³n de ambiente especÃ­fico
      */
     public function isEnvironmentSpecific(): bool
     {
@@ -204,7 +205,7 @@ class CompanyConfiguration extends Model
     }
 
     /**
-     * Validar estructura de datos según el tipo de configuración
+     * Validar estructura de datos segÃºn el tipo de configuraciÃ³n
      */
     public function validateConfigData(): array
     {
@@ -221,17 +222,17 @@ class CompanyConfiguration extends Model
                 }
                 if ($this->environment === 'produccion') {
                     if (empty($data['usuario_sol'])) {
-                        $errors[] = 'usuario_sol es requerido en producción';
+                        $errors[] = 'usuario_sol es requerido en producciÃ³n';
                     }
                     if (empty($data['clave_sol'])) {
-                        $errors[] = 'clave_sol es requerido en producción';
+                        $errors[] = 'clave_sol es requerido en producciÃ³n';
                     }
                 }
                 break;
 
             case 'tax_settings':
                 if (isset($data['igv_porcentaje']) && (!is_numeric($data['igv_porcentaje']) || $data['igv_porcentaje'] < 0)) {
-                    $errors[] = 'igv_porcentaje debe ser un número positivo';
+                    $errors[] = 'igv_porcentaje debe ser un nÃºmero positivo';
                 }
                 break;
         }
