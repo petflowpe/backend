@@ -35,8 +35,10 @@ use App\Models\Supplier;
 use App\Models\Unit;
 use App\Models\User;
 use App\Models\Vehicle;
+use App\Models\VehicleConfiguration;
 use App\Models\VehicleExpense;
 use App\Models\VehicleMaintenance;
+use App\Models\VehicleService;
 use App\Models\Zone;
 use Illuminate\Support\Facades\DB;
 use Laravel\Sanctum\Sanctum;
@@ -111,20 +113,31 @@ function bootstrapTwoTenants(): array
         ],
         'vehicles' => fn ($cId) => [
             'company_id' => $cId,
+            'name' => 'Vehiculo ' . $cId,
+            'type' => 'furgoneta_grande',
             'placa' => 'PLC-' . $cId . substr(uniqid(), -3),
-            'tipo' => 'auto',
-            'estado' => 'activo',
+            'activo' => 1,
         ],
         'vehicle_maintenances' => fn ($cId) => [
             'company_id' => $cId,
-            'fecha' => now()->toDateString(),
-            'descripcion' => 'Mantenimiento ' . $cId,
+            'type' => 'Revision',
+            'status' => 'completed',
+            'description' => 'Mantenimiento ' . $cId,
+            'date' => now()->toDateString(),
+            'cost' => 100,
         ],
         'vehicle_expenses' => fn ($cId) => [
             'company_id' => $cId,
-            'fecha' => now()->toDateString(),
-            'tipo' => 'combustible',
-            'monto' => 100.00,
+            'date' => now()->toDateString(),
+            'category' => 'combustible',
+            'amount' => 100.00,
+        ],
+        'vehicle_configurations' => fn ($cId) => [
+            'company_id' => $cId,
+            'type' => 'vehicle_brand',
+            'name' => 'Marca ' . $cId,
+            'sort_order' => 0,
+            'active' => 1,
         ],
         'products' => fn ($cId) => [
             'company_id' => $cId,
@@ -221,6 +234,8 @@ test('global scope aisla todos los modelos multi-tenant criticos', function () {
         Vehicle::class,
         VehicleMaintenance::class,
         VehicleExpense::class,
+        VehicleService::class,
+        VehicleConfiguration::class,
         Product::class,
         Category::class,
         Brand::class,
