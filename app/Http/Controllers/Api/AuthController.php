@@ -163,6 +163,8 @@ class AuthController extends Controller
                 'id' => $user->id,
                 'name' => $user->name,
                 'email' => $user->email,
+                'document_type' => $user->document_type,
+                'document_number' => $user->document_number,
                 'role' => $user->role ? [
                     'name' => $user->role->name,
                     'display_name' => $user->role->display_name,
