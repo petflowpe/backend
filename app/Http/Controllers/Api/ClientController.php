@@ -99,6 +99,7 @@ class ClientController extends Controller
                 'fecha_ultima_visita' => 'nullable|date',
                 'fecha_registro' => 'nullable|date',
                 'activo' => 'boolean',
+                'registration_source' => 'nullable|string|in:portal,staff,import',
                 'pets' => 'nullable|array',
                 'pets.*.name' => 'required|string|max:255',
                 'pets.*.species' => 'required|string|in:Perro,Gato,Otro',
@@ -216,6 +217,13 @@ class ClientController extends Controller
                     ], 409);
                 }
             }
+
+            if (($data['registration_source'] ?? null) === 'portal') {
+                $data['portal_approval_status'] = 'pending';
+                $data['portal_booking_enabled'] = false;
+                $data['portal_registered_at'] = now();
+            }
+            unset($data['registration_source']);
 
             DB::beginTransaction();
             try {

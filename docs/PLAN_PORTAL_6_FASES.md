@@ -43,14 +43,14 @@
 
 ---
 
-## Fase 3 — Portal autenticado
+## Fase 3 — Portal autenticado ✅
 
 | Entregable | Estado |
 |------------|--------|
-| Paso de pago en `BookingFlow` (adelanto simulado) | Pendiente |
-| Ocultar reserva invitado en `VetClinicPublic` | Pendiente |
-| Registro cliente → `portal_approval_status: pending` | Pendiente |
-| Código seguimiento `SPT-XXXXXX` en confirmación | Pendiente |
+| Paso de pago en `BookingFlow` (adelanto simulado) | ✅ |
+| Ocultar reserva invitado en `VetClinicPublic` | ✅ |
+| Registro cliente → `portal_approval_status: pending` | ✅ |
+| Código seguimiento `SPT-XXXXXX` en confirmación | ✅ |
 
 ---
 
