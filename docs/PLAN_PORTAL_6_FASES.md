@@ -54,23 +54,23 @@
 
 ---
 
-## Fase 4 — Ficha cliente (staff)
+## Fase 4 — Ficha cliente (staff) ✅
 
 | Entregable | Estado |
 |------------|--------|
-| Toggle **Permitir reserva portal** en `Clients.tsx` | Pendiente |
-| Badge estado: `pending` / `approved` / `rejected` | Pendiente |
-| Acción rápida: aprobar cliente portal desde Confirmaciones | Pendiente |
+| Toggle **Permitir reserva portal** en `Clients.tsx` | ✅ |
+| Badge estado: `pending` / `approved` / `rejected` | ✅ |
+| Acción rápida: aprobar cliente portal desde Confirmaciones | ✅ (Fase 5) |
 
 ---
 
-## Fase 5 — Tres módulos staff
+## Fase 5 — Tres módulos staff ✅
 
-| Módulo | Rol portal |
-|--------|------------|
-| **Agenda Visual** | Operación diaria; badge `portal` / `staff` |
-| **Confirmaciones** | Inbox citas `Pendiente` + `booking_source=portal_auth` |
-| **Lista de Citas** | Back-office, filtros por origen, clonar, facturar |
+| Módulo | Rol portal | Estado |
+|--------|------------|--------|
+| **Agenda Visual** | Badge portal + filtro origen + detalle adelanto | ✅ |
+| **Confirmaciones** | Inbox portal + aprobar cliente + KPI pendientes | ✅ |
+| **Lista de Citas** | Badge origen + filtro Staff/Portal/Invitado | ✅ |
 
 ---
 

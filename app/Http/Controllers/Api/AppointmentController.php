@@ -69,6 +69,10 @@ class AppointmentController extends Controller
                 $query->where('vehicle_id', $request->vehicle_id);
             }
 
+            if ($request->filled('booking_source')) {
+                $query->where('booking_source', $request->booking_source);
+            }
+
             $appointments = $query->orderBy('date', 'asc')
                 ->orderBy('time', 'asc')
                 ->paginate($request->integer('per_page', 20));
