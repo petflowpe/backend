@@ -74,12 +74,12 @@
 
 ---
 
-## Fase 6 — Configuración UI
+## Fase 6 — Configuración UI ✅
 
 | Entregable | Estado |
 |------------|--------|
-| Sección **Portal de Reservas** en Settings | Pendiente |
-| Campos: adelanto %, monto fijo, invitado on/off, auto-confirmar | Pendiente |
+| Sección **Portal de Reservas** en Settings | ✅ |
+| Campos: adelanto %, monto fijo, invitado on/off, auto-confirmar | ✅ |
 | API: `GET/PUT /companies/{id}/config/portal_settings` | ✅ (backend listo) |
 
 ---

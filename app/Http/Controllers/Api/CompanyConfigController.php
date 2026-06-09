@@ -150,6 +150,10 @@ class CompanyConfigController extends Controller
             if ($section === 'calendar_settings' && !empty($validatedData)) {
                 $dataToSave = array_merge($company->getCalendarConfig(), $validatedData);
             }
+            if ($section === 'portal_settings' && !empty($validatedData)) {
+                $existing = $company->getConfig($section, null, null, []);
+                $dataToSave = array_merge(is_array($existing) ? $existing : [], $validatedData);
+            }
 
             // Actualizar configuración
             $updated = $this->configService->updateConfiguration($company, $section, $dataToSave);
