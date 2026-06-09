@@ -546,6 +546,7 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'throttle:api', EnsureUserCompa
     // ========================
     // CITAS (APPOINTMENTS)
     // ========================
+    Route::get('/booking/availability', [AppointmentController::class, 'availability']);
     Route::apiResource('appointments', AppointmentController::class);
     Route::post('/appointments/{appointment}/reschedule', [AppointmentController::class, 'reschedule']);
     Route::post('/appointments/{appointment}/change-status', [AppointmentController::class, 'changeStatus']);

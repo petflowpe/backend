@@ -16,6 +16,7 @@ use App\Models\StockMovement;
 use App\Models\Vehicle;
 use Illuminate\Support\Facades\Auth;
 use App\Services\AppointmentBillingService;
+use App\Services\AvailabilityService;
 use App\Services\PortalBookingService;
 use App\Services\VehicleCoverageService;
 use Illuminate\Support\Str;
@@ -99,6 +100,59 @@ class AppointmentController extends Controller
     }
 
     /**
+     * Disponibilidad unificada para staff (misma lógica que portal público).
+     */
+    public function availability(Request $request): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'date' => 'required|date|after_or_equal:today',
+            'district' => 'nullable|string|max:100',
+            'duration' => 'nullable|integer|min:15|max:240',
+            'vehicle_id' => 'nullable|integer|exists:vehicles,id',
+            'exclude_appointment_id' => 'nullable|integer|exists:appointments,id',
+            'company_id' => 'nullable|integer|exists:companies,id',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Errores de validación',
+                'errors' => $validator->errors(),
+            ], 422);
+        }
+
+        $companyId = $request->input('company_id')
+            ?? \App\Helpers\ScopeHelper::companyId($request)
+            ?? $request->user()?->company_id;
+
+        if (!$companyId) {
+            return response()->json([
+                'success' => false,
+                'message' => 'company_id es requerido o el usuario debe tener empresa asignada.',
+            ], 422);
+        }
+
+        $date = Carbon::parse($request->input('date'));
+        $duration = (int) $request->input('duration', 60);
+
+        /** @var AvailabilityService $availabilityService */
+        $availabilityService = app(AvailabilityService::class);
+        $result = $availabilityService->getSlots(
+            (int) $companyId,
+            $date,
+            $duration,
+            $request->input('district'),
+            $request->input('vehicle_id') ? (int) $request->input('vehicle_id') : null,
+            $request->input('exclude_appointment_id') ? (int) $request->input('exclude_appointment_id') : null
+        );
+
+        return response()->json([
+            'success' => true,
+            'data' => $result,
+        ]);
+    }
+
+    /**
      * Crear nueva cita
      */
     public function store(Request $request): JsonResponse
@@ -155,38 +209,11 @@ class AppointmentController extends Controller
             }
             $data['address'] = $data['address'] ?? '';
 
-            // 1. Validar Horario Laboral
             $date = Carbon::parse($data['date']);
-            $dayOfWeek = strtolower($date->format('l'));
-            $dayNamesEs = [
-                'monday' => 'lunes', 'tuesday' => 'martes', 'wednesday' => 'miércoles',
-                'thursday' => 'jueves', 'friday' => 'viernes', 'saturday' => 'sábado', 'sunday' => 'domingo',
-            ];
-            $dayLabel = $dayNamesEs[$dayOfWeek] ?? $dayOfWeek;
-            $config = CompanyConfiguration::where('company_id', $data['company_id'])
-                ->where('config_type', 'document_settings') // As defined in seeder
-                ->first();
+            $duration = (int) ($data['duration'] ?? 60);
+            $districtForAvailability = $data['district'] ?? null;
 
-            if ($config && isset($config->config_data['working_hours'])) {
-                $hours = $config->config_data['working_hours'][$dayOfWeek] ?? null;
-                if ($hours) {
-                    if (!$hours['open']) {
-                        return response()->json(['success' => false, 'message' => "La empresa no trabaja los $dayLabel."], 422);
-                    }
-                    $appointmentTime = Carbon::createFromFormat('H:i', $data['time']);
-                    $startTime = Carbon::createFromFormat('H:i', $hours['start']);
-                    $endTime = Carbon::createFromFormat('H:i', $hours['end']);
-
-                    if ($appointmentTime->lt($startTime) || $appointmentTime->gt($endTime)) {
-                        return response()->json([
-                            'success' => false,
-                            'message' => "Horario fuera de jornada laboral ($hours[start] - $hours[end])."
-                        ], 422);
-                    }
-                }
-            }
-
-            // 2. Auto-asignar vehículo por cobertura si no se envió
+            // 1. Auto-asignar vehículo por cobertura si no se envió
             if (empty($data['vehicle_id'])) {
                 $clientForCoverage = Client::find($data['client_id']);
                 $districtForCoverage = $data['district'] ?? $clientForCoverage?->distrito;
@@ -205,29 +232,29 @@ class AppointmentController extends Controller
                 }
             }
 
-            // 3. Validar disponibilidad y cobertura del vehículo (si hay vehículo asignado)
-            if (!empty($data['vehicle_id'])) {
-                $vehicle = Vehicle::find($data['vehicle_id']);
-                if ($vehicle) {
-                    $client = Client::find($data['client_id']);
-                    $district = $data['district'] ?? $client?->distrito;
-                    /** @var VehicleCoverageService $coverageService */
-                    $coverageService = app(VehicleCoverageService::class);
-                    $coverage = $coverageService->vehicleCoversAppointment(
-                        $vehicle,
-                        $client,
-                        $date,
-                        $data['time'],
-                        $district
-                    );
+            // 2. Validar disponibilidad unificada (horario + cobertura + ocupación)
+            $clientForAvailability = Client::find($data['client_id']);
+            if (!$districtForAvailability) {
+                $districtForAvailability = $clientForAvailability?->distrito;
+            }
 
-                    if (!$coverage['covers']) {
-                        return response()->json([
-                            'success' => false,
-                            'message' => $coverage['message'] ?? 'El vehículo no está disponible para esta cita.',
-                        ], 422);
-                    }
-                }
+            /** @var AvailabilityService $availabilityService */
+            $availabilityService = app(AvailabilityService::class);
+            $slotCheck = $availabilityService->validateSlot(
+                (int) $data['company_id'],
+                $date,
+                $data['time'],
+                $duration,
+                $districtForAvailability,
+                !empty($data['vehicle_id']) ? (int) $data['vehicle_id'] : null
+            );
+
+            if (!$slotCheck['valid']) {
+                return response()->json([
+                    'success' => false,
+                    'message' => $slotCheck['message'] ?? 'Horario no disponible.',
+                    'reason' => $slotCheck['reason'] ?? null,
+                ], 422);
             }
 
             // 3. Validar Stock si hay service_id

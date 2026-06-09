@@ -33,13 +33,13 @@
 
 ---
 
-## Fase 2 — Disponibilidad unificada
+## Fase 2 — Disponibilidad unificada ✅
 
 | Entregable | Estado |
 |------------|--------|
-| Servicio único `AvailabilityService` (empresa + móvil + cobertura + zonas) | Pendiente |
-| Misma lógica en portal auth, API pública y staff | Pendiente |
-| Slots con `reason` detallado (`fuera_horario`, `sin_cobertura`, `ocupado`) | Pendiente |
+| Servicio único `AvailabilityService` (empresa + móvil + cobertura + zonas) | ✅ |
+| Misma lógica en portal auth, API pública y staff | ✅ |
+| Slots con `reason` detallado (`fuera_horario`, `sin_cobertura`, `ocupado`, `pasado`, `cerrado`) | ✅ |
 
 ---
 
