@@ -3,7 +3,9 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Helpers\ScopeHelper;
 use App\Models\MedicalRecord;
+use App\Models\Pet;
 use App\Models\VaccineRecord;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
@@ -106,7 +108,17 @@ class MedicalRecordController extends Controller
                 ], 422);
             }
 
-            $record = MedicalRecord::create($validator->validated());
+            $data = $validator->validated();
+            $pet = Pet::with('client:id,company_id')->findOrFail($data['pet_id']);
+
+            $data['company_id'] = $data['company_id']
+                ?? ScopeHelper::companyId($request)
+                ?? $pet->company_id
+                ?? $pet->client?->company_id;
+
+            $data['user_id'] = $data['user_id'] ?? $request->user()?->id;
+
+            $record = MedicalRecord::create($data);
 
             return response()->json([
                 'success' => true,

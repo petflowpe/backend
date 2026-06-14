@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\Supplier;
+use App\Models\PurchaseOrder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -26,8 +27,9 @@ class SupplierService
         
         if ($perPage > 0) {
             $paginated = $query->orderBy('sort_order')->orderBy('name')->paginate($perPage, ['*'], 'page', request()->get('page', 1));
+            $items = $this->appendPurchaseTotals(collect($paginated->items()));
             return [
-                'data' => $paginated->items(),
+                'data' => $items->all(),
                 'pagination' => [
                     'current_page' => $paginated->currentPage(),
                     'per_page' => $paginated->perPage(),
@@ -39,9 +41,33 @@ class SupplierService
             ];
         }
         
+        $items = $this->appendPurchaseTotals($query->orderBy('sort_order')->orderBy('name')->get());
         return [
-            'data' => $query->orderBy('sort_order')->orderBy('name')->get()
+            'data' => $items->all()
         ];
+    }
+
+    /**
+     * @param \Illuminate\Support\Collection<int, Supplier>|\Illuminate\Database\Eloquent\Collection<int, Supplier> $suppliers
+     */
+    private function appendPurchaseTotals($suppliers)
+    {
+        if ($suppliers->isEmpty()) {
+            return $suppliers;
+        }
+
+        $ids = $suppliers->pluck('id')->filter()->values();
+        $totals = PurchaseOrder::query()
+            ->whereIn('supplier_id', $ids)
+            ->where('status', '!=', 'cancelled')
+            ->groupBy('supplier_id')
+            ->selectRaw('supplier_id, SUM(COALESCE(invoice_total, total, 0)) as total_purchases')
+            ->pluck('total_purchases', 'supplier_id');
+
+        return $suppliers->map(function (Supplier $supplier) use ($totals) {
+            $supplier->setAttribute('total_purchases', (float) ($totals[$supplier->id] ?? 0));
+            return $supplier;
+        });
     }
 
     public function create(array $data): Supplier
