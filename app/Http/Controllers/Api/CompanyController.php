@@ -279,6 +279,8 @@ class CompanyController extends Controller
         // Procesar booleanos
         $validatedData['modo_produccion'] = $this->processBoolean($validatedData['modo_produccion'] ?? false);
         $validatedData['activo'] = $this->processBoolean($validatedData['activo'] ?? true);
+        $validatedData['usuario_sol'] = $validatedData['usuario_sol'] ?? 'DEMO';
+        $validatedData['clave_sol'] = $validatedData['clave_sol'] ?? 'DEMO';
 
         // Procesar archivos
         if ($request->hasFile('certificado_pem')) {

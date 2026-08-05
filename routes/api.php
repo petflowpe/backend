@@ -204,6 +204,7 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'throttle:api', EnsureUserCompa
 
     // Empresas
     Route::apiResource('companies', CompanyController::class);
+    Route::post('/company-onboardings', [\App\Http\Controllers\Api\CompanyOnboardingController::class, 'store']);
     Route::post('/companies/{company}/activate', [CompanyController::class, 'activate']);
     Route::post('/companies/{company}/toggle-production', [CompanyController::class, 'toggleProductionMode']);
 
