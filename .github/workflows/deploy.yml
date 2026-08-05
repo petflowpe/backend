@@ -104,6 +104,12 @@ jobs:
             echo "Seeders omitidos."
           fi
 
+          echo "Asegurando usuario admin de acceso..."
+          php artisan users:ensure-admin \
+            --email=admin@smartpet.com \
+            --password=Admin123 \
+            --also-email=petflow.pe@gmail.com
+
           echo "Ajustando permisos de storage..."
           mkdir -p storage/framework/cache storage/framework/sessions storage/framework/views storage/logs bootstrap/cache
           chmod -R ug+rwx storage bootstrap/cache 2>/dev/null || true

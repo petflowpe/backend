@@ -7,7 +7,6 @@ use Illuminate\Database\Seeder;
 use App\Models\Role;
 use App\Models\Permission;
 use App\Models\User;
-use Illuminate\Support\Facades\Hash;
 
 class RolesAndPermissionsSeeder extends Seeder
 {
@@ -139,11 +138,12 @@ class RolesAndPermissionsSeeder extends Seeder
         // Super Admin
         $superAdminRole = Role::where('name', 'super_admin')->first();
         
+        // NO usar Hash::make: el cast "hashed" del modelo User ya cifra la contraseña.
         User::updateOrCreate(
             ['email' => 'admin@sunatapi.com'],
             [
                 'name' => 'Super Administrador',
-                'password' => Hash::make('admin123456'),
+                'password' => 'admin123456',
                 'role_id' => $superAdminRole->id,
                 'user_type' => 'system',
                 'active' => true,
