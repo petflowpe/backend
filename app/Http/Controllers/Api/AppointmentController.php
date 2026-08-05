@@ -12,10 +12,13 @@ use App\Models\Product;
 use App\Models\Client;
 use App\Models\CashMovement;
 use App\Models\CashSession;
+use App\Models\Payment;
 use App\Models\StockMovement;
 use App\Models\Vehicle;
 use Illuminate\Support\Facades\Auth;
 use App\Services\AppointmentBillingService;
+use App\Services\AppointmentDocumentCorrectionService;
+use App\Services\AppointmentPaymentStatusService;
 use App\Services\AvailabilityService;
 use App\Services\PortalBookingService;
 use App\Services\VehicleCoverageService;
@@ -487,7 +490,7 @@ class AppointmentController extends Controller
                 'duration' => 'nullable|integer|min:15|max:480',
                 'price' => 'nullable|numeric|min:0',
                 'discount' => 'nullable|numeric|min:0',
-                'payment_status' => 'nullable|string|in:Pendiente,Pagado,Reembolsado',
+                'payment_status' => 'nullable|string|in:Pendiente,Parcial,Pagado,Reembolsado',
                 'payment_method' => 'nullable|string|in:Efectivo,Tarjeta,Yape,Plin,Transferencia',
                 'notes' => 'nullable|string',
                 'cancellation_reason' => 'nullable|string',
@@ -947,6 +950,111 @@ class AppointmentController extends Controller
     }
 
     /**
+     * Opciones de anulación (≤7 días desde emisión) / nota de crédito.
+     */
+    public function documentCorrectionOptions(
+        Appointment $appointment,
+        AppointmentDocumentCorrectionService $correction
+    ): JsonResponse {
+        try {
+            return response()->json([
+                'success' => true,
+                'data' => $correction->options($appointment),
+            ]);
+        } catch (Exception $e) {
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 422);
+        }
+    }
+
+    /**
+     * Anular CPE de la cita (ventana 7 días desde fecha_emision).
+     * No modifica payment_status.
+     */
+    public function voidDocument(
+        Request $request,
+        Appointment $appointment,
+        AppointmentDocumentCorrectionService $correction
+    ): JsonResponse {
+        $validator = Validator::make($request->all(), [
+            'motivo' => 'nullable|string|max:500',
+            'send_to_sunat' => 'nullable|boolean',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json(['success' => false, 'errors' => $validator->errors()], 422);
+        }
+
+        try {
+            $result = $correction->voidDocument($appointment, [
+                'motivo' => $request->input('motivo'),
+                'send_to_sunat' => $request->has('send_to_sunat')
+                    ? $request->boolean('send_to_sunat')
+                    : null,
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Comprobante anulado. El cobro de la cita no se modificó.',
+                'data' => $result,
+            ]);
+        } catch (Exception $e) {
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 422);
+        }
+    }
+
+    /**
+     * Emite nota de crédito total o parcial sobre el CPE de la cita.
+     * No modifica payment_status ni reabre cobro (regla 4A).
+     */
+    public function issueCreditNote(
+        Request $request,
+        Appointment $appointment,
+        AppointmentDocumentCorrectionService $correction
+    ): JsonResponse {
+        $validator = Validator::make($request->all(), [
+            'mode' => 'required|in:total,partial',
+            'cod_motivo' => 'nullable|string|max:2',
+            'des_motivo' => 'nullable|string|max:250',
+            'serie' => 'nullable|string|max:4',
+            'send_to_sunat' => 'nullable|boolean',
+            'detalles' => 'nullable|array|min:1',
+            'detalles.*.codigo' => 'nullable|string|max:30',
+            'detalles.*.descripcion' => 'required_with:detalles|string|max:255',
+            'detalles.*.cantidad' => 'required_with:detalles|numeric|min:0.01',
+            'detalles.*.mto_valor_unitario' => 'required_with:detalles|numeric|min:0.01',
+            'detalles.*.unidad' => 'nullable|string|max:10',
+            'detalles.*.tip_afe_igv' => 'nullable|string|max:2',
+            'detalles.*.porcentaje_igv' => 'nullable|numeric|min:0',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json(['success' => false, 'errors' => $validator->errors()], 422);
+        }
+
+        try {
+            $result = $correction->issueCreditNote($appointment, [
+                'mode' => $request->input('mode'),
+                'cod_motivo' => $request->input('cod_motivo'),
+                'des_motivo' => $request->input('des_motivo'),
+                'serie' => $request->input('serie'),
+                'detalles' => $request->input('detalles'),
+                'send_to_sunat' => $request->boolean('send_to_sunat'),
+            ]);
+
+            $cn = $result['credit_note'];
+            $numero = $cn->numero_completo ?? ($cn->serie . '-' . $cn->correlativo);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Nota de crédito emitida: ' . $numero . '. El cobro de la cita no se modificó.',
+                'data' => $result,
+            ], 201);
+        } catch (Exception $e) {
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 422);
+        }
+    }
+
+    /**
      * Registrar adelanto simulado de reserva portal (Fase 1).
      */
     public function payAdvance(Request $request, Appointment $appointment): JsonResponse
@@ -1030,10 +1138,6 @@ class AppointmentController extends Controller
                 return response()->json(['success' => false, 'errors' => $validator->errors()], 422);
             }
 
-            if ($appointment->payment_status === 'Pagado') {
-                return response()->json(['success' => false, 'message' => 'La cita ya está pagada'], 409);
-            }
-
             if (!in_array($appointment->status, ['Completada', 'En Proceso', 'Confirmada'], true)) {
                 return response()->json([
                     'success' => false,
@@ -1041,20 +1145,55 @@ class AppointmentController extends Controller
                 ], 422);
             }
 
-            $amount = (float) ($request->input('amount') ?? $appointment->total);
+            /** @var AppointmentPaymentStatusService $paymentStatus */
+            $paymentStatus = app(AppointmentPaymentStatusService::class);
+            $remaining = $paymentStatus->remainingAmount($appointment);
+
+            if ($remaining <= AppointmentPaymentStatusService::EPSILON) {
+                return response()->json(['success' => false, 'message' => 'La cita ya está pagada'], 409);
+            }
+
             $method = $request->input('payment_method');
             $cashSessionId = $request->input('cash_session_id');
+            $requestedAmount = $request->filled('amount')
+                ? (float) $request->input('amount')
+                : $remaining;
+            // No exigir más que el saldo; evita cobrar de más por defecto.
+            $amount = round(min($requestedAmount, $remaining), 2);
 
-            DB::transaction(function () use ($appointment, $amount, $method, $cashSessionId, $request) {
-                $appointment->update([
-                    'payment_status' => 'Pagado',
-                    'payment_method' => $method,
-                    'status' => $appointment->status === 'Confirmada' ? 'Completada' : $appointment->status,
-                ]);
+            if ($amount <= AppointmentPaymentStatusService::EPSILON) {
+                return response()->json(['success' => false, 'message' => 'Monto de cobro inválido'], 422);
+            }
 
+            DB::transaction(function () use ($appointment, $amount, $method, $cashSessionId, $request, $paymentStatus) {
                 $session = $cashSessionId
                     ? CashSession::where('id', $cashSessionId)->where('status', 'OPEN')->first()
                     : null;
+
+                Payment::create([
+                    'company_id' => $appointment->company_id,
+                    'branch_id' => $appointment->branch_id,
+                    'invoice_id' => $appointment->invoice_id,
+                    'appointment_id' => $appointment->id,
+                    'user_id' => Auth::id(),
+                    'cash_session_id' => $session?->id,
+                    'amount' => $amount,
+                    'fee' => 0,
+                    'net_amount' => $amount,
+                    'currency' => 'PEN',
+                    'method' => $paymentStatus->mapCashMethodToPayment($method),
+                    'gateway' => 'manual',
+                    'status' => 'completed',
+                    'reference' => $request->input('reference'),
+                    'paid_at' => now(),
+                    'notes' => 'Cobro cita #' . $appointment->id,
+                    'metadata' => [
+                        'source' => 'cash_register',
+                        'appointment_id' => $appointment->id,
+                        'tracking_code' => $appointment->tracking_code,
+                        'payment_method_label' => $method,
+                    ],
+                ]);
 
                 CashMovement::create([
                     'company_id' => $appointment->company_id,
@@ -1074,12 +1213,27 @@ class AppointmentController extends Controller
                         'tracking_code' => $appointment->tracking_code,
                     ],
                 ]);
+
+                $fresh = $appointment->fresh();
+                $status = $paymentStatus->resolveStatus($fresh);
+                $fresh->update([
+                    'payment_status' => $status,
+                    'payment_method' => $method,
+                    'status' => $fresh->status === 'Confirmada' ? 'Completada' : $fresh->status,
+                ]);
             });
+
+            $updated = $appointment->fresh()->load(['client', 'pet', 'vehicle']);
 
             return response()->json([
                 'success' => true,
                 'message' => 'Cobro registrado',
-                'data' => $appointment->fresh()->load(['client', 'pet', 'vehicle']),
+                'data' => $updated,
+                'meta' => [
+                    'paid_amount' => $paymentStatus->paidAmount($updated),
+                    'remaining_amount' => $paymentStatus->remainingAmount($updated),
+                    'payment_status' => $updated->payment_status,
+                ],
             ]);
         } catch (Exception $e) {
             return response()->json([

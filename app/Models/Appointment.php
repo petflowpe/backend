@@ -148,6 +148,11 @@ class Appointment extends Model
         return $this->belongsTo(Invoice::class);
     }
 
+    public function payments(): HasMany
+    {
+        return $this->hasMany(Payment::class);
+    }
+
     public function hasElectronicDocument(): bool
     {
         return $this->boleta_id || $this->invoice_id;

@@ -110,7 +110,7 @@ class ConfigController extends Controller
 
                     'appointmentStatuses' => ['Pendiente', 'Confirmada', 'En Proceso', 'Completada', 'Cancelada'],
                     'paymentMethods' => ['Efectivo', 'Tarjeta', 'Yape', 'Plin', 'Transferencia'],
-                    'paymentStatuses' => ['Pendiente', 'Pagado', 'Reembolsado'],
+                    'paymentStatuses' => ['Pendiente', 'Parcial', 'Pagado', 'Reembolsado'],
 
                     'geo' => [
                         'regions' => $regions->map(fn ($r) => ['id' => $r->id, 'name' => $r->nombre])->values(),

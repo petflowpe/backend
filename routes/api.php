@@ -440,30 +440,27 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'throttle:api', EnsureUserCompa
     Route::prefix('credit-notes')->group(function () {
         Route::get('/', [CreditNoteController::class, 'index']);
         Route::post('/', [CreditNoteController::class, 'store']);
+        // Catálogo ANTES de /{id} para no capturar "catalogs" como id
+        Route::get('/catalogs/motivos', [CreditNoteController::class, 'getMotivos']);
         Route::get('/{id}', [CreditNoteController::class, 'show']);
         Route::post('/{id}/send-sunat', [CreditNoteController::class, 'sendToSunat']);
         Route::get('/{id}/download-xml', [CreditNoteController::class, 'downloadXml']);
         Route::get('/{id}/download-cdr', [CreditNoteController::class, 'downloadCdr']);
         Route::get('/{id}/download-pdf', [CreditNoteController::class, 'downloadPdf']);
         Route::post('/{id}/generate-pdf', [CreditNoteController::class, 'generatePdf']);
-
-        // Catálogo de motivos
-        Route::get('/catalogs/motivos', [CreditNoteController::class, 'getMotivos']);
     });
 
     // Notas de Débito
     Route::prefix('debit-notes')->group(function () {
         Route::get('/', [DebitNoteController::class, 'index']);
         Route::post('/', [DebitNoteController::class, 'store']);
+        Route::get('/catalogs/motivos', [DebitNoteController::class, 'getMotivos']);
         Route::get('/{id}', [DebitNoteController::class, 'show']);
         Route::post('/{id}/send-sunat', [DebitNoteController::class, 'sendToSunat']);
         Route::get('/{id}/download-xml', [DebitNoteController::class, 'downloadXml']);
         Route::get('/{id}/download-cdr', [DebitNoteController::class, 'downloadCdr']);
         Route::get('/{id}/download-pdf', [DebitNoteController::class, 'downloadPdf']);
         Route::post('/{id}/generate-pdf', [DebitNoteController::class, 'generatePdf']);
-
-        // Catálogo de motivos
-        Route::get('/catalogs/motivos', [DebitNoteController::class, 'getMotivos']);
     });
 
     // Comprobantes de Retención
@@ -557,6 +554,9 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'throttle:api', EnsureUserCompa
     Route::post('/appointments/{appointment}/pay-advance', [AppointmentController::class, 'payAdvance']);
     Route::get('/appointments/{appointment}/billing-preview', [AppointmentController::class, 'billingPreview']);
     Route::post('/appointments/{appointment}/issue-document', [AppointmentController::class, 'issueDocument']);
+    Route::get('/appointments/{appointment}/document-correction-options', [AppointmentController::class, 'documentCorrectionOptions']);
+    Route::post('/appointments/{appointment}/void-document', [AppointmentController::class, 'voidDocument']);
+    Route::post('/appointments/{appointment}/credit-note', [AppointmentController::class, 'issueCreditNote']);
     Route::get('/clients/{clientId}/appointments', [AppointmentController::class, 'getByClient']);
     Route::get('/appointments/recurring-series/{seriesId}', [AppointmentController::class, 'getRecurringSeries']);
 
