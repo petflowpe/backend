@@ -9,17 +9,23 @@ Artisan::command('inspire', function () {
 
 Artisan::command('users:ensure-admin
     {--email=admin@smartpet.com : Email principal de acceso}
-    {--password=Admin123 : Contraseña en texto plano (cast hashed la cifra una sola vez)}
+    {--password= : Contraseña en texto plano (OBLIGATORIA; el cast hashed cifra una sola vez)}
     {--name=Super Administrador : Nombre visible}
     {--also-email= : Email adicional a sincronizar con la misma clave}
+    {--only-if-missing : Solo crea si el email no existe; no resetea claves existentes}
 ', function () {
     $email = strtolower(trim((string) $this->option('email')));
     $password = (string) $this->option('password');
     $name = (string) $this->option('name');
     $alsoEmail = strtolower(trim((string) ($this->option('also-email') ?: '')));
+    $onlyIfMissing = (bool) $this->option('only-if-missing');
 
-    if ($email === '' || $password === '') {
-        $this->error('email y password son obligatorios.');
+    if ($email === '') {
+        $this->error('email es obligatorio.');
+        return 1;
+    }
+    if ($password === '') {
+        $this->error('password es obligatorio (pásalo por --password o secret de CI).');
         return 1;
     }
 
@@ -35,7 +41,14 @@ Artisan::command('users:ensure-admin
 
     $companyId = \App\Models\Company::query()->value('id');
 
-    $upsert = function (string $userEmail) use ($name, $password, $superAdminRole, $companyId) {
+    $cmd = $this;
+    $upsert = function (string $userEmail) use ($name, $password, $superAdminRole, $companyId, $onlyIfMissing, $cmd) {
+        $existing = \App\Models\User::where('email', $userEmail)->first();
+        if ($onlyIfMissing && $existing) {
+            $cmd->line("Skip (ya existe): {$userEmail} (id={$existing->id})");
+            return $existing;
+        }
+
         /** @var \App\Models\User $user */
         $user = \App\Models\User::updateOrCreate(
             ['email' => $userEmail],

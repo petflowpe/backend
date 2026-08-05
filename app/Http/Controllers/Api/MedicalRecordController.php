@@ -6,7 +6,6 @@ use App\Http\Controllers\Controller;
 use App\Helpers\ScopeHelper;
 use App\Models\MedicalRecord;
 use App\Models\Pet;
-use App\Models\VaccineRecord;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Log;
@@ -16,42 +15,43 @@ use Exception;
 class MedicalRecordController extends Controller
 {
     /**
-     * Listar registros médicos
+     * Listar registros médicos (siempre acotados al scope de empresa).
      */
     public function index(Request $request): JsonResponse
     {
         try {
             $query = MedicalRecord::with(['pet', 'client', 'user', 'appointment']);
+            $this->applyCompanyFilter($query, $request);
 
             $routePetId = $request->route('petId');
             $routeClientId = $request->route('clientId');
 
             if ($routePetId) {
                 $query->where('pet_id', $routePetId);
-            } elseif ($request->has('pet_id')) {
+            } elseif ($request->filled('pet_id')) {
                 $query->where('pet_id', $request->pet_id);
             }
 
             if ($routeClientId) {
                 $query->where('client_id', $routeClientId);
-            } elseif ($request->has('client_id')) {
+            } elseif ($request->filled('client_id')) {
                 $query->where('client_id', $request->client_id);
             }
 
-            if ($request->has('type')) {
+            if ($request->filled('type')) {
                 $query->where('type', $request->type);
             }
 
-            if ($request->has('date_from')) {
+            if ($request->filled('date_from')) {
                 $query->whereDate('date', '>=', $request->date_from);
             }
 
-            if ($request->has('date_to')) {
+            if ($request->filled('date_to')) {
                 $query->whereDate('date', '<=', $request->date_to);
             }
 
             $records = $query->orderBy('date', 'desc')
-                            ->paginate($request->integer('per_page', 20));
+                ->paginate($request->integer('per_page', 20));
 
             return response()->json([
                 'success' => true,
@@ -60,16 +60,15 @@ class MedicalRecordController extends Controller
                     'total' => $records->total(),
                     'per_page' => $records->perPage(),
                     'current_page' => $records->currentPage(),
-                    'last_page' => $records->lastPage()
-                ]
+                    'last_page' => $records->lastPage(),
+                ],
             ]);
-
         } catch (Exception $e) {
-            Log::error("Error al listar registros médicos", ['error' => $e->getMessage()]);
+            Log::error('Error al listar registros médicos', ['error' => $e->getMessage()]);
 
             return response()->json([
                 'success' => false,
-                'message' => 'Error al obtener registros médicos: ' . $e->getMessage()
+                'message' => 'Error al obtener registros médicos: ' . $e->getMessage(),
             ], 500);
         }
     }
@@ -104,18 +103,47 @@ class MedicalRecordController extends Controller
                 return response()->json([
                     'success' => false,
                     'message' => 'Errores de validación',
-                    'errors' => $validator->errors()
+                    'errors' => $validator->errors(),
                 ], 422);
             }
 
             $data = $validator->validated();
-            $pet = Pet::with('client:id,company_id')->findOrFail($data['pet_id']);
+            $pet = Pet::with('client:id,company_id')->find($data['pet_id']);
+            if (!$pet) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'No autorizado: la mascota no pertenece a su empresa o no existe',
+                ], 403);
+            }
 
-            $data['company_id'] = $data['company_id']
-                ?? ScopeHelper::companyId($request)
+            $scopeCompanyId = ScopeHelper::companyId($request);
+            $resolvedCompanyId = $scopeCompanyId
                 ?? $pet->company_id
-                ?? $pet->client?->company_id;
+                ?? $pet->client?->company_id
+                ?? ($data['company_id'] ?? null);
 
+            if (!$resolvedCompanyId) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'No se pudo determinar la empresa del registro médico',
+                ], 422);
+            }
+
+            // Defensa multiempresa: la mascota debe pertenecer al scope.
+            $petCompanyId = (int) ($pet->company_id ?? $pet->client?->company_id ?? 0);
+            if ($scopeCompanyId && $petCompanyId && $petCompanyId !== (int) $scopeCompanyId) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'No autorizado: la mascota no pertenece a su empresa',
+                ], 403);
+            }
+
+            if ((int) ($data['client_id'] ?? 0) !== (int) $pet->client_id && $pet->client_id) {
+                // Mantener consistencia pet→client si el cliente enviado no coincide.
+                $data['client_id'] = $pet->client_id;
+            }
+
+            $data['company_id'] = (int) $resolvedCompanyId;
             $data['user_id'] = $data['user_id'] ?? $request->user()?->id;
 
             $record = MedicalRecord::create($data);
@@ -123,15 +151,14 @@ class MedicalRecordController extends Controller
             return response()->json([
                 'success' => true,
                 'message' => 'Registro médico creado exitosamente',
-                'data' => $record->load(['pet', 'client', 'user'])
+                'data' => $record->load(['pet', 'client', 'user']),
             ], 201);
-
         } catch (Exception $e) {
-            Log::error("Error al crear registro médico", ['error' => $e->getMessage()]);
+            Log::error('Error al crear registro médico', ['error' => $e->getMessage()]);
 
             return response()->json([
                 'success' => false,
-                'message' => 'Error al crear registro médico: ' . $e->getMessage()
+                'message' => 'Error al crear registro médico: ' . $e->getMessage(),
             ], 500);
         }
     }
@@ -139,21 +166,21 @@ class MedicalRecordController extends Controller
     /**
      * Mostrar registro médico
      */
-    public function show($id): JsonResponse
+    public function show(Request $request, $id): JsonResponse
     {
         try {
-            $record = MedicalRecord::with(['pet', 'client', 'user', 'appointment', 'vaccineRecords'])
-                                  ->findOrFail($id);
+            $query = MedicalRecord::with(['pet', 'client', 'user', 'appointment', 'vaccineRecords']);
+            $this->applyCompanyFilter($query, $request);
+            $record = $query->findOrFail($id);
 
             return response()->json([
                 'success' => true,
-                'data' => $record
+                'data' => $record,
             ]);
-
         } catch (Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Registro médico no encontrado'
+                'message' => 'Registro médico no encontrado',
             ], 404);
         }
     }
@@ -164,7 +191,9 @@ class MedicalRecordController extends Controller
     public function update(Request $request, $id): JsonResponse
     {
         try {
-            $record = MedicalRecord::findOrFail($id);
+            $query = MedicalRecord::query();
+            $this->applyCompanyFilter($query, $request);
+            $record = $query->findOrFail($id);
 
             $validator = Validator::make($request->all(), [
                 'type' => 'sometimes|string|in:Consulta,Vacunación,Cirugía,Emergencia,Chequeo,Laboratorio,Desparasitación,Tratamiento',
@@ -181,7 +210,7 @@ class MedicalRecordController extends Controller
                 return response()->json([
                     'success' => false,
                     'message' => 'Errores de validación',
-                    'errors' => $validator->errors()
+                    'errors' => $validator->errors(),
                 ], 422);
             }
 
@@ -190,15 +219,14 @@ class MedicalRecordController extends Controller
             return response()->json([
                 'success' => true,
                 'message' => 'Registro médico actualizado exitosamente',
-                'data' => $record->load(['pet', 'client', 'user'])
+                'data' => $record->load(['pet', 'client', 'user']),
             ]);
-
         } catch (Exception $e) {
-            Log::error("Error al actualizar registro médico", ['error' => $e->getMessage()]);
+            Log::error('Error al actualizar registro médico', ['error' => $e->getMessage()]);
 
             return response()->json([
                 'success' => false,
-                'message' => 'Error al actualizar registro médico: ' . $e->getMessage()
+                'message' => 'Error al actualizar registro médico: ' . $e->getMessage(),
             ], 500);
         }
     }
@@ -206,22 +234,34 @@ class MedicalRecordController extends Controller
     /**
      * Eliminar registro médico
      */
-    public function destroy($id): JsonResponse
+    public function destroy(Request $request, $id): JsonResponse
     {
         try {
-            $record = MedicalRecord::findOrFail($id);
+            $query = MedicalRecord::query();
+            $this->applyCompanyFilter($query, $request);
+            $record = $query->findOrFail($id);
             $record->delete();
 
             return response()->json([
                 'success' => true,
-                'message' => 'Registro médico eliminado exitosamente'
+                'message' => 'Registro médico eliminado exitosamente',
             ]);
-
         } catch (Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Error al eliminar registro médico'
-            ], 500);
+                'message' => 'Registro médico no encontrado',
+            ], 404);
+        }
+    }
+
+    /**
+     * Defensa en profundidad: además del global scope, acota por ScopeHelper.
+     */
+    private function applyCompanyFilter($query, Request $request): void
+    {
+        $companyId = ScopeHelper::companyId($request);
+        if ($companyId) {
+            $query->where($query->getModel()->getTable() . '.company_id', $companyId);
         }
     }
 }

@@ -74,13 +74,16 @@ jobs:
       - name: Post-deploy en VPS
         env:
           RUN_SEEDERS: ${{ secrets.RUN_SEEDERS_ON_DEPLOY }}
+          ENSURE_ADMIN_PASSWORD: ${{ secrets.ENSURE_ADMIN_PASSWORD }}
+          ENSURE_ADMIN_EMAIL: ${{ secrets.ENSURE_ADMIN_EMAIL }}
+          ENSURE_ADMIN_ALSO_EMAIL: ${{ secrets.ENSURE_ADMIN_ALSO_EMAIL }}
         run: |
           ssh -i ~/.ssh/deploy_key \
             -o BatchMode=yes \
             -o ConnectTimeout=30 \
             -o StrictHostKeyChecking=no \
             "$SSH_USER@$SSH_HOST" \
-            "DEPLOY_PATH='$DEPLOY_PATH' RUN_SEEDERS='${RUN_SEEDERS:-false}' bash -s" << 'REMOTE_SCRIPT'
+            "DEPLOY_PATH='$DEPLOY_PATH' RUN_SEEDERS='${RUN_SEEDERS:-false}' ENSURE_ADMIN_PASSWORD='${ENSURE_ADMIN_PASSWORD:-}' ENSURE_ADMIN_EMAIL='${ENSURE_ADMIN_EMAIL:-}' ENSURE_ADMIN_ALSO_EMAIL='${ENSURE_ADMIN_ALSO_EMAIL:-}' bash -s" << 'REMOTE_SCRIPT'
           set -euo pipefail
 
           cd "$DEPLOY_PATH"
@@ -89,6 +92,13 @@ jobs:
           if [ ! -f .env ]; then
             echo "ERROR: falta .env en $DEPLOY_PATH (debe existir en el servidor; no se sube por rsync)"
             exit 1
+          fi
+
+          if grep -qE '^APP_DEBUG=true' .env; then
+            echo "::warning::APP_DEBUG=true en el VPS. Debe ser false en producción SaaS."
+          fi
+          if grep -qE '^APP_ENV=local' .env; then
+            echo "::warning::APP_ENV=local en el VPS. Debe ser production."
           fi
 
           echo "Instalando dependencias PHP..."
@@ -104,11 +114,20 @@ jobs:
             echo "Seeders omitidos."
           fi
 
-          echo "Asegurando usuario admin de acceso..."
-          php artisan users:ensure-admin \
-            --email=admin@smartpet.com \
-            --password=Admin123 \
-            --also-email=petflow.pe@gmail.com
+          if [ -n "${ENSURE_ADMIN_PASSWORD:-}" ]; then
+            ADMIN_EMAIL="${ENSURE_ADMIN_EMAIL:-admin@smartpet.com}"
+            ALSO_ARGS=()
+            if [ -n "${ENSURE_ADMIN_ALSO_EMAIL:-}" ]; then
+              ALSO_ARGS+=(--also-email="$ENSURE_ADMIN_ALSO_EMAIL")
+            fi
+            echo "Asegurando usuario admin (password desde secret ENSURE_ADMIN_PASSWORD)..."
+            php artisan users:ensure-admin \
+              --email="$ADMIN_EMAIL" \
+              --password="$ENSURE_ADMIN_PASSWORD" \
+              "${ALSO_ARGS[@]}"
+          else
+            echo "ENSURE_ADMIN_PASSWORD no configurado: no se crea/resetea admin en este deploy (seguro)."
+          fi
 
           echo "Ajustando permisos de storage..."
           mkdir -p storage/framework/cache storage/framework/sessions storage/framework/views storage/logs bootstrap/cache
