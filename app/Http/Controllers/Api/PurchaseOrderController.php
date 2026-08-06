@@ -6,11 +6,14 @@ use App\Http\Controllers\Controller;
 use App\Models\PurchaseOrder;
 use App\Models\PurchaseOrderItem;
 use App\Services\PurchaseOrderService;
+use Dompdf\Dompdf;
+use Dompdf\Options;
 use Exception;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\View;
 
 class PurchaseOrderController extends Controller
 {
@@ -154,6 +157,60 @@ class PurchaseOrderController extends Controller
             'success' => true,
             'data' => $purchase_order,
         ]);
+    }
+
+    /**
+     * PDF de orden de compra (Dompdf).
+     */
+    public function downloadPdf(PurchaseOrder $purchase_order)
+    {
+        try {
+            $purchase_order->load([
+                'company',
+                'supplier',
+                'items.product:id,name,code',
+            ]);
+
+            $statusLabels = [
+                'pending' => 'Pendiente',
+                'in_transit' => 'En tránsito',
+                'partial' => 'Recepción parcial',
+                'delivered' => 'Entregado',
+                'cancelled' => 'Cancelado',
+            ];
+
+            $html = View::make('pdf.purchase-order', [
+                'order' => $purchase_order,
+                'company' => $purchase_order->company,
+                'statusLabel' => $statusLabels[$purchase_order->status] ?? $purchase_order->status,
+            ])->render();
+
+            $options = new Options();
+            $options->set('defaultFont', 'DejaVu Sans');
+            $options->set('isHtml5ParserEnabled', true);
+            $dompdf = new Dompdf($options);
+            $dompdf->loadHtml($html);
+            $dompdf->setPaper('A4', 'portrait');
+            $dompdf->render();
+
+            $filename = 'OC_' . ($purchase_order->order_number ?: $purchase_order->id) . '.pdf';
+            $filename = preg_replace('/[^A-Za-z0-9_\-\.]/', '_', $filename);
+
+            return response()->streamDownload(
+                fn () => print($dompdf->output()),
+                $filename,
+                ['Content-Type' => 'application/pdf']
+            );
+        } catch (Exception $e) {
+            Log::error('Error al generar PDF de OC', [
+                'purchase_order_id' => $purchase_order->id,
+                'error' => $e->getMessage(),
+            ]);
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al generar PDF: ' . $e->getMessage(),
+            ], 500);
+        }
     }
 
     public function update(Request $request, PurchaseOrder $purchase_order): JsonResponse
