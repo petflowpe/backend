@@ -320,6 +320,9 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'throttle:api', EnsureUserCompa
     Route::get('/purchase-orders', [PurchaseOrderController::class, 'index']);
     Route::post('/purchase-orders', [PurchaseOrderController::class, 'store']);
     Route::get('/purchase-orders/{purchase_order}/download-pdf', [PurchaseOrderController::class, 'downloadPdf']);
+    Route::post('/purchase-orders/{purchase_order}/invoice-attachment', [PurchaseOrderController::class, 'uploadInvoiceAttachment']);
+    Route::get('/purchase-orders/{purchase_order}/invoice-attachment', [PurchaseOrderController::class, 'downloadInvoiceAttachment']);
+    Route::delete('/purchase-orders/{purchase_order}/invoice-attachment', [PurchaseOrderController::class, 'deleteInvoiceAttachment']);
     Route::get('/purchase-orders/{purchase_order}', [PurchaseOrderController::class, 'show']);
     Route::put('/purchase-orders/{purchase_order}', [PurchaseOrderController::class, 'update']);
     Route::delete('/purchase-orders/{purchase_order}', [PurchaseOrderController::class, 'destroy']);
