@@ -323,7 +323,9 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'throttle:api', EnsureUserCompa
     Route::put('/purchase-orders/{purchase_order}', [PurchaseOrderController::class, 'update']);
     Route::delete('/purchase-orders/{purchase_order}', [PurchaseOrderController::class, 'destroy']);
     Route::patch('/purchase-orders/{purchase_order}/status', [PurchaseOrderController::class, 'changeStatus']);
+    Route::post('/purchase-orders/{purchase_order}/receive', [PurchaseOrderController::class, 'receive']);
     Route::post('/purchase-orders/{purchase_order}/complete', [PurchaseOrderController::class, 'complete']);
+    Route::post('/purchase-orders/{purchase_order}/pay', [PurchaseOrderController::class, 'pay']);
 
     // ========================
     // CORRELATIVOS

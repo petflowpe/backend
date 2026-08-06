@@ -5,22 +5,19 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\PurchaseOrder;
 use App\Models\PurchaseOrderItem;
-use App\Models\Product;
-use App\Services\ProductService;
+use App\Services\PurchaseOrderService;
+use Exception;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
-use Exception;
 
 class PurchaseOrderController extends Controller
 {
     public function __construct(
-        private ProductService $productService
+        private PurchaseOrderService $purchaseOrderService
     ) {}
-    /**
-     * Listar órdenes de compra
-     */
+
     public function index(Request $request): JsonResponse
     {
         try {
@@ -35,10 +32,24 @@ class PurchaseOrderController extends Controller
             if ($request->filled('status')) {
                 $query->byStatus($request->get('status'));
             }
+            if ($request->filled('supplier_id')) {
+                $query->where('supplier_id', $request->integer('supplier_id'));
+            }
+            if ($request->filled('payment_status')) {
+                $query->where('payment_status', $request->get('payment_status'));
+            }
+            if ($request->filled('from')) {
+                $query->whereDate('order_date', '>=', $request->get('from'));
+            }
+            if ($request->filled('to')) {
+                $query->whereDate('order_date', '<=', $request->get('to'));
+            }
             if ($request->filled('search')) {
                 $search = $request->get('search');
                 $query->where(function ($q) use ($search) {
                     $q->where('id', 'like', "%{$search}%")
+                        ->orWhere('order_number', 'like', "%{$search}%")
+                        ->orWhere('invoice_number', 'like', "%{$search}%")
                         ->orWhereHas('supplier', fn ($s) => $s->where('name', 'like', "%{$search}%"));
                 });
             }
@@ -66,9 +77,6 @@ class PurchaseOrderController extends Controller
         }
     }
 
-    /**
-     * Crear orden de compra
-     */
     public function store(Request $request): JsonResponse
     {
         $validated = $request->validate([
@@ -97,10 +105,13 @@ class PurchaseOrderController extends Controller
             $order = PurchaseOrder::create([
                 'company_id' => $companyId,
                 'supplier_id' => $validated['supplier_id'],
+                'order_number' => $this->purchaseOrderService->nextOrderNumber($companyId),
                 'order_date' => $validated['order_date'],
                 'delivery_date' => $validated['delivery_date'] ?? null,
                 'status' => 'pending',
                 'total' => round($total, 2),
+                'payment_status' => 'unpaid',
+                'amount_paid' => 0,
                 'notes' => $validated['notes'] ?? null,
                 'created_by' => $request->user()?->id,
             ]);
@@ -112,6 +123,7 @@ class PurchaseOrderController extends Controller
                     'purchase_order_id' => $order->id,
                     'product_id' => $row['product_id'],
                     'quantity' => $qty,
+                    'quantity_received' => 0,
                     'unit_cost' => $unitCost,
                     'total_cost' => round($qty * $unitCost, 2),
                 ]);
@@ -135,9 +147,6 @@ class PurchaseOrderController extends Controller
         }
     }
 
-    /**
-     * Ver una orden
-     */
     public function show(PurchaseOrder $purchase_order): JsonResponse
     {
         $purchase_order->load(['supplier', 'items.product:id,name,code,stock,unit_price']);
@@ -147,15 +156,18 @@ class PurchaseOrderController extends Controller
         ]);
     }
 
-    /**
-     * Actualizar orden (solo si está pending)
-     */
     public function update(Request $request, PurchaseOrder $purchase_order): JsonResponse
     {
-        if ($purchase_order->status !== 'pending') {
+        if (in_array($purchase_order->status, ['delivered', 'cancelled'], true) || $purchase_order->kardex_registered) {
             return response()->json([
                 'success' => false,
-                'message' => 'Solo se pueden editar órdenes en estado pendiente',
+                'message' => 'No se puede editar una orden entregada, cancelada o ya ingresada a kardex',
+            ], 422);
+        }
+        if ((float) $purchase_order->items()->sum('quantity_received') > 0) {
+            return response()->json([
+                'success' => false,
+                'message' => 'No se puede editar una orden con recepción parcial',
             ], 422);
         }
 
@@ -176,8 +188,8 @@ class PurchaseOrderController extends Controller
             }
 
             $purchase_order->update([
-                'delivery_date' => $validated['delivery_date'] ?? $purchase_order->delivery_date,
-                'notes' => $validated['notes'] ?? $purchase_order->notes,
+                'delivery_date' => $validated['delivery_date'] ?? null,
+                'notes' => $validated['notes'] ?? null,
                 'total' => round($total, 2),
             ]);
 
@@ -189,13 +201,14 @@ class PurchaseOrderController extends Controller
                     'purchase_order_id' => $purchase_order->id,
                     'product_id' => $row['product_id'],
                     'quantity' => $qty,
+                    'quantity_received' => 0,
                     'unit_cost' => $unitCost,
                     'total_cost' => round($qty * $unitCost, 2),
                 ]);
             }
 
             DB::commit();
-            $purchase_order->load(['supplier', 'items.product:id,name,code']);
+            $purchase_order->load(['supplier', 'items.product:id,name,code,stock']);
             return response()->json([
                 'success' => true,
                 'message' => 'Orden actualizada',
@@ -212,12 +225,19 @@ class PurchaseOrderController extends Controller
         }
     }
 
-    /**
-     * Cambiar estado (pending -> in_transit -> delivered; o cancelled)
-     */
     public function changeStatus(Request $request, PurchaseOrder $purchase_order): JsonResponse
     {
-        $status = $request->validate(['status' => 'required|string|in:pending,in_transit,delivered,cancelled'])['status'];
+        $status = $request->validate([
+            'status' => 'required|string|in:pending,in_transit,partial,delivered,cancelled',
+        ])['status'];
+
+        if ($status === 'delivered') {
+            return response()->json([
+                'success' => false,
+                'message' => 'Para marcar entregado use recepción / complete (ingresa stock al kardex)',
+            ], 422);
+        }
+
         $purchase_order->update(['status' => $status]);
         $purchase_order->load(['supplier', 'items.product:id,name,code']);
         return response()->json([
@@ -228,17 +248,50 @@ class PurchaseOrderController extends Controller
     }
 
     /**
-     * Completar orden: registrar factura, kardex (stock IN) y marcar como entregada
+     * Recepción parcial o total (IN kardex + costo promedio ponderado).
+     */
+    public function receive(Request $request, PurchaseOrder $purchase_order): JsonResponse
+    {
+        $validated = $request->validate([
+            'items' => 'required|array|min:1',
+            'items.*.item_id' => 'nullable|integer',
+            'items.*.product_id' => 'nullable|integer',
+            'items.*.quantity' => 'required|numeric|min:0.001',
+            'invoice_number' => 'nullable|string|max:50',
+            'invoice_date' => 'nullable|date',
+            'invoice_total' => 'nullable|numeric|min:0',
+        ]);
+
+        try {
+            $order = $this->purchaseOrderService->receive(
+                $purchase_order,
+                $validated['items'],
+                [
+                    'invoice_number' => $validated['invoice_number'] ?? null,
+                    'invoice_date' => $validated['invoice_date'] ?? null,
+                    'invoice_total' => $validated['invoice_total'] ?? null,
+                ],
+                $request->user()?->id
+            );
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Recepción registrada y stock actualizado',
+                'data' => $order,
+            ]);
+        } catch (Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], 422);
+        }
+    }
+
+    /**
+     * Completar: recibe todo lo pendiente (compat).
      */
     public function complete(Request $request, PurchaseOrder $purchase_order): JsonResponse
     {
-        if ($purchase_order->kardex_registered) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Esta orden ya fue registrada en kardex',
-            ], 422);
-        }
-
         $validated = $request->validate([
             'invoice_number' => 'nullable|string|max:50',
             'invoice_date' => 'nullable|date',
@@ -246,69 +299,65 @@ class PurchaseOrderController extends Controller
         ]);
 
         try {
-            DB::beginTransaction();
-            $purchase_order->update([
-                'status' => 'delivered',
-                'invoice_number' => $validated['invoice_number'] ?? null,
-                'invoice_date' => isset($validated['invoice_date']) ? $validated['invoice_date'] : null,
-                'invoice_total' => isset($validated['invoice_total']) ? (float) $validated['invoice_total'] : $purchase_order->total,
-                'kardex_registered' => true,
-            ]);
+            $order = $this->purchaseOrderService->receiveAllRemaining(
+                $purchase_order,
+                $validated,
+                $request->user()?->id
+            );
 
-            $userId = $request->user()?->id;
-            foreach ($purchase_order->items as $item) {
-                $product = Product::find($item->product_id);
-                if (!$product) {
-                    continue;
-                }
-                $qty = (float) $item->quantity;
-                $unitCost = (float) $item->unit_cost;
-
-                $this->productService->adjustStock(
-                    $product,
-                    null,
-                    $qty,
-                    'IN',
-                    'Entrada por orden de compra #' . $purchase_order->id,
-                    [
-                        'wrap_transaction' => false,
-                        'source_type' => 'purchase',
-                        'source_id' => $purchase_order->id,
-                        'unit_cost' => $unitCost,
-                        'created_by' => $userId,
-                    ]
-                );
-
-                $product->update(['cost_price' => $unitCost]);
-            }
-
-            DB::commit();
-            $purchase_order->load(['supplier', 'items.product:id,name,code,stock']);
             return response()->json([
                 'success' => true,
                 'message' => 'Orden completada y stock actualizado',
-                'data' => $purchase_order,
+                'data' => $order,
             ]);
         } catch (Exception $e) {
-            DB::rollBack();
-            Log::error('Error al completar orden de compra', ['error' => $e->getMessage()]);
             return response()->json([
                 'success' => false,
-                'message' => 'Error al completar orden',
-                'error' => config('app.debug') ? $e->getMessage() : null,
-            ], 500);
+                'message' => $e->getMessage(),
+            ], 422);
         }
     }
 
-    /**
-     * Eliminar orden (solo si pending y no kardex_registered)
-     */
-    public function destroy(PurchaseOrder $purchase_order): JsonResponse
+    public function pay(Request $request, PurchaseOrder $purchase_order): JsonResponse
     {
-        if ($purchase_order->kardex_registered) {
+        $validated = $request->validate([
+            'amount' => 'required|numeric|min:0.01',
+            'payment_method' => 'nullable|string|max:40',
+            'post_to_cash' => 'nullable|boolean',
+            'cash_session_id' => 'nullable|integer',
+        ]);
+
+        try {
+            $order = $this->purchaseOrderService->registerPayment(
+                $purchase_order,
+                (float) $validated['amount'],
+                [
+                    'payment_method' => $validated['payment_method'] ?? 'cash',
+                    'post_to_cash' => (bool) ($validated['post_to_cash'] ?? false),
+                    'cash_session_id' => $validated['cash_session_id'] ?? null,
+                ],
+                $request->user()?->id
+            );
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Pago registrado',
+                'data' => $order,
+            ]);
+        } catch (Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'No se puede eliminar una orden ya registrada en kardex',
+                'message' => $e->getMessage(),
+            ], 422);
+        }
+    }
+
+    public function destroy(PurchaseOrder $purchase_order): JsonResponse
+    {
+        if ($purchase_order->kardex_registered || (float) $purchase_order->items()->sum('quantity_received') > 0) {
+            return response()->json([
+                'success' => false,
+                'message' => 'No se puede eliminar una orden con recepción registrada',
             ], 422);
         }
         $purchase_order->items()->delete();
