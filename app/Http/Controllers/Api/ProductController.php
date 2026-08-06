@@ -11,6 +11,8 @@ use App\Services\ProductService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 use Exception;
 
 class ProductController extends Controller
@@ -247,6 +249,99 @@ class ProductController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Error al obtener productos con stock bajo',
+                'error' => config('app.debug') ? $e->getMessage() : null,
+            ], 500);
+        }
+    }
+
+    /**
+     * Subir imagen principal del producto (reemplaza la primera entrada de images[]).
+     */
+    public function uploadImage(Request $request, Product $product): JsonResponse
+    {
+        try {
+            $request->validate([
+                'image' => ['required', 'file', 'image', 'mimes:jpeg,jpg,png,webp,gif', 'max:2048'],
+            ]);
+
+            $file = $request->file('image');
+            $dir = 'products/' . $product->company_id . '/' . $product->id;
+            $filename = Str::uuid()->toString() . '.' . strtolower($file->getClientOriginalExtension() ?: 'jpg');
+            $path = $file->storeAs($dir, $filename, 'public');
+
+            $images = is_array($product->images) ? $product->images : [];
+            // Eliminar imagen previa principal si está en storage local
+            if (!empty($images[0]) && is_string($images[0]) && !str_starts_with($images[0], 'http')) {
+                if (Storage::disk('public')->exists($images[0])) {
+                    Storage::disk('public')->delete($images[0]);
+                }
+            }
+
+            array_unshift($images, $path);
+            $images = array_values(array_unique(array_filter($images)));
+            $product->update(['images' => $images]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Imagen subida',
+                'data' => [
+                    'path' => $path,
+                    'url' => Storage::disk('public')->url($path),
+                    'product' => $product->fresh(['category', 'brandRelation', 'supplierRelation', 'productStocks']),
+                ],
+            ]);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            throw $e;
+        } catch (Exception $e) {
+            Log::error('Error al subir imagen de producto', [
+                'product_id' => $product->id,
+                'error' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al subir imagen',
+                'error' => config('app.debug') ? $e->getMessage() : null,
+            ], 500);
+        }
+    }
+
+    /**
+     * Eliminar imagen principal del producto.
+     */
+    public function deleteImage(Product $product): JsonResponse
+    {
+        try {
+            $images = is_array($product->images) ? $product->images : [];
+            if (empty($images)) {
+                return response()->json([
+                    'success' => true,
+                    'message' => 'Sin imagen que eliminar',
+                    'data' => $product,
+                ]);
+            }
+
+            $primary = array_shift($images);
+            if (is_string($primary) && !str_starts_with($primary, 'http') && Storage::disk('public')->exists($primary)) {
+                Storage::disk('public')->delete($primary);
+            }
+
+            $product->update(['images' => array_values($images)]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Imagen eliminada',
+                'data' => $product->fresh(),
+            ]);
+        } catch (Exception $e) {
+            Log::error('Error al eliminar imagen de producto', [
+                'product_id' => $product->id,
+                'error' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al eliminar imagen',
                 'error' => config('app.debug') ? $e->getMessage() : null,
             ], 500);
         }
