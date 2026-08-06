@@ -633,7 +633,8 @@ class UserController extends Controller
             );
 
             $expireMinutes = (int) config('auth.passwords.users.expire', 60);
-            $resetUrl = (config('app.frontend_url') ?: config('app.url'))
+            $frontendBase = rtrim((string) (config('app.frontend_url') ?: config('app.url')), '/');
+            $resetUrl = $frontendBase
                 . '/reset-password?token=' . urlencode($token)
                 . '&email=' . urlencode($user->email);
 

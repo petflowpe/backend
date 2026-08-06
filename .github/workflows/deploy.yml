@@ -94,11 +94,53 @@ jobs:
             exit 1
           fi
 
-          if grep -qE '^APP_DEBUG=true' .env; then
-            echo "::warning::APP_DEBUG=true en el VPS. Debe ser false en producción SaaS."
+          env_val() {
+            local key="$1"
+            grep -E "^${key}=" .env | tail -n 1 | cut -d= -f2- | tr -d '\r' | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//"
+          }
+
+          APP_ENV_VAL="$(env_val APP_ENV)"
+          APP_DEBUG_VAL="$(env_val APP_DEBUG)"
+          ALLOW_INSECURE_VAL="$(env_val ALLOW_INSECURE_ENV)"
+          MAIL_MAILER_VAL="$(env_val MAIL_MAILER)"
+          FRONTEND_URL_VAL="$(env_val FRONTEND_URL)"
+
+          insecure=0
+          if [ "$APP_DEBUG_VAL" = "true" ] || [ "$APP_DEBUG_VAL" = "1" ]; then
+            insecure=1
+            echo "ERROR: APP_DEBUG=${APP_DEBUG_VAL:-<vacío>} — en producción debe ser false"
           fi
-          if grep -qE '^APP_ENV=local' .env; then
-            echo "::warning::APP_ENV=local en el VPS. Debe ser production."
+          if [ "$APP_ENV_VAL" != "production" ]; then
+            insecure=1
+            echo "ERROR: APP_ENV=${APP_ENV_VAL:-<vacío>} — en producción debe ser production"
+          fi
+
+          if [ "$insecure" = "1" ]; then
+            if [ "$ALLOW_INSECURE_VAL" = "true" ] || [ "$ALLOW_INSECURE_VAL" = "1" ]; then
+              echo "::warning::Entorno inseguro, pero ALLOW_INSECURE_ENV=true — el deploy continúa (solo temporal)."
+            else
+              echo "::error::Hardening: corrige el .env en el VPS y vuelve a desplegar."
+              echo "  APP_ENV=production"
+              echo "  APP_DEBUG=false"
+              echo "Temporal (no recomendado): ALLOW_INSECURE_ENV=true"
+              exit 1
+            fi
+          else
+            echo "OK hardening: APP_ENV=production y APP_DEBUG=false"
+          fi
+
+          if [ -z "$MAIL_MAILER_VAL" ] || [ "$MAIL_MAILER_VAL" = "log" ] || [ "$MAIL_MAILER_VAL" = "array" ]; then
+            echo "::warning::MAIL_MAILER=${MAIL_MAILER_VAL:-log} — los emails (forgot password) NO salen. Configure SMTP en .env del VPS."
+            echo "  Ejemplo Hostinger: MAIL_MAILER=smtp MAIL_SCHEME=smtps MAIL_HOST=smtp.hostinger.com MAIL_PORT=465"
+            echo "  Luego: php artisan mail:test correo@ejemplo.com && php artisan config:cache"
+          else
+            echo "OK mailer: MAIL_MAILER=$MAIL_MAILER_VAL"
+          fi
+
+          if [ -z "$FRONTEND_URL_VAL" ]; then
+            echo "::warning::FRONTEND_URL vacío — los links de reset usarán APP_URL (puede ser el API)."
+          else
+            echo "OK FRONTEND_URL definido"
           fi
 
           echo "Instalando dependencias PHP..."
