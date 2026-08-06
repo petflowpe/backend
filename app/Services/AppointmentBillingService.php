@@ -14,6 +14,7 @@ class AppointmentBillingService
     public function __construct(
         private DocumentService $documentService,
         private AppointmentPaymentStatusService $paymentStatusService,
+        private AppointmentStockService $stockService,
     ) {
     }
 
@@ -57,6 +58,9 @@ class AppointmentBillingService
             throw new Exception('Tipo de comprobante no válido');
         }
 
+        // Validar stock antes de emitir; el descuento kardex ocurre tras crear el CPE.
+        $this->stockService->assertStockAvailable($appointment);
+
         $payload = $this->buildDocumentPayload($appointment, $tipo, $options['serie'] ?? null);
         $sendSunat = (bool) ($options['send_to_sunat'] ?? false);
 
@@ -75,6 +79,7 @@ class AppointmentBillingService
             $appointment->update([
                 'invoice_id' => $invoice->id,
             ]);
+            $this->stockService->deductOnInvoice($appointment->fresh(['items']));
             $this->paymentStatusService->sync($appointment->fresh());
 
             return [
@@ -95,6 +100,7 @@ class AppointmentBillingService
         $appointment->update([
             'boleta_id' => $boleta->id,
         ]);
+        $this->stockService->deductOnInvoice($appointment->fresh(['items']));
         $this->paymentStatusService->sync($appointment->fresh());
 
         return [

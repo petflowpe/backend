@@ -6,7 +6,6 @@ use App\Http\Controllers\Controller;
 use App\Models\Appointment;
 use App\Models\AppointmentItem;
 use App\Models\Pet;
-use App\Models\Service;
 use App\Models\CompanyConfiguration;
 use App\Models\Product;
 use App\Models\Client;
@@ -261,7 +260,7 @@ class AppointmentController extends Controller
 
             // 3. Validar Stock si hay service_id (insumos del servicio)
             if (isset($data['service_id'])) {
-                foreach ($this->resolveRequiredProducts((int) $data['service_id']) as $req) {
+                foreach (app(\App\Services\AppointmentStockService::class)->resolveRequiredProducts((int) $data['service_id']) as $req) {
                     $product = Product::find($req['product_id'] ?? null);
                     $qty = (float) ($req['quantity'] ?? 0);
                     if (!$product || $product->stock < $qty) {
@@ -709,68 +708,7 @@ class AppointmentController extends Controller
             }
             if ($status === 'Completada' && !$appointment->completed_at) {
                 $data['completed_at'] = now();
-
-                $productService = app(\App\Services\ProductService::class);
-
-                // Deducción por insumos del servicio
-                if ($appointment->service_id) {
-                    $requiredProducts = $this->resolveRequiredProducts((int) $appointment->service_id);
-                    foreach ($requiredProducts as $req) {
-                        $product = Product::find($req['product_id'] ?? null);
-                        $qty = (float) ($req['quantity'] ?? 0);
-                        if (! $product || $qty <= 0) {
-                            continue;
-                        }
-                        $productService->adjustStock(
-                            $product,
-                            null,
-                            $qty,
-                            'OUT',
-                            'Salida por insumos de servicio en cita #' . $appointment->id,
-                            [
-                                'wrap_transaction' => false,
-                                'source_type' => 'appointment',
-                                'source_id' => $appointment->id,
-                                'branch_id' => $appointment->branch_id,
-                                'unit_cost' => (float) ($product->cost_price ?? 0),
-                                'created_by' => auth()->id(),
-                            ]
-                        );
-                    }
-                }
-
-                // Deducción por ítems producto vendidos en la cita
-                $appointment->loadMissing('items');
-                foreach ($appointment->items as $item) {
-                    $itemType = strtoupper((string) ($item->item_type ?? ''));
-                    if (! in_array($itemType, ['PRODUCTO', 'PRODUCT'], true)) {
-                        continue;
-                    }
-                    $productId = $item->product_id ?? $item->item_id ?? null;
-                    if (! $productId) {
-                        continue;
-                    }
-                    $product = Product::find($productId);
-                    $qty = (float) ($item->quantity ?? 1);
-                    if (! $product || $qty <= 0) {
-                        continue;
-                    }
-                    $productService->adjustStock(
-                        $product,
-                        null,
-                        $qty,
-                        'OUT',
-                        'Salida por producto en cita #' . $appointment->id,
-                        [
-                            'wrap_transaction' => false,
-                            'source_type' => 'appointment_item',
-                            'source_id' => $appointment->id,
-                            'branch_id' => $appointment->branch_id,
-                            'unit_cost' => (float) ($product->cost_price ?? 0),
-                            'created_by' => auth()->id(),
-                        ]
-                    );
-                }
+                // Stock se descuenta al emitir boleta/factura (AppointmentBillingService), no al completar.
             }
             if ($status === 'Cancelada' && !$appointment->cancelled_at) {
                 $data['cancelled_at'] = now();
@@ -1271,26 +1209,4 @@ class AppointmentController extends Controller
         }
     }
 
-    /**
-     * Insumos requeridos: tabla services O product SERVICIO (metadata.required_products).
-     *
-     * @return array<int, array{product_id?: int, quantity?: float|int}>
-     */
-    private function resolveRequiredProducts(int $serviceId): array
-    {
-        $fromService = Service::find($serviceId)?->required_products;
-        if (is_array($fromService) && count($fromService) > 0) {
-            return $fromService;
-        }
-
-        $catalogService = Product::query()
-            ->where('id', $serviceId)
-            ->where('item_type', 'SERVICIO')
-            ->first();
-
-        $meta = is_array($catalogService?->metadata) ? $catalogService->metadata : [];
-        $fromProduct = $meta['required_products'] ?? [];
-
-        return is_array($fromProduct) ? $fromProduct : [];
-    }
 }
