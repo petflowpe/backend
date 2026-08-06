@@ -12,10 +12,14 @@ use App\Models\Product;
 use App\Models\Client;
 use App\Models\CashMovement;
 use App\Models\CashSession;
-use App\Models\StockMovement;
+use App\Models\Payment;
 use App\Models\Vehicle;
 use Illuminate\Support\Facades\Auth;
 use App\Services\AppointmentBillingService;
+use App\Services\AppointmentDocumentCorrectionService;
+use App\Services\AppointmentPaymentStatusService;
+use App\Services\AvailabilityService;
+use App\Services\PortalBookingService;
 use App\Services\VehicleCoverageService;
 use Illuminate\Support\Str;
 use Illuminate\Http\Request;
@@ -68,6 +72,10 @@ class AppointmentController extends Controller
                 $query->where('vehicle_id', $request->vehicle_id);
             }
 
+            if ($request->filled('booking_source')) {
+                $query->where('booking_source', $request->booking_source);
+            }
+
             $appointments = $query->orderBy('date', 'asc')
                 ->orderBy('time', 'asc')
                 ->paginate($request->integer('per_page', 20));
@@ -91,6 +99,59 @@ class AppointmentController extends Controller
                 'message' => 'Error al obtener citas: ' . $e->getMessage()
             ], 500);
         }
+    }
+
+    /**
+     * Disponibilidad unificada para staff (misma lógica que portal público).
+     */
+    public function availability(Request $request): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'date' => 'required|date|after_or_equal:today',
+            'district' => 'nullable|string|max:100',
+            'duration' => 'nullable|integer|min:15|max:240',
+            'vehicle_id' => 'nullable|integer|exists:vehicles,id',
+            'exclude_appointment_id' => 'nullable|integer|exists:appointments,id',
+            'company_id' => 'nullable|integer|exists:companies,id',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Errores de validación',
+                'errors' => $validator->errors(),
+            ], 422);
+        }
+
+        $companyId = $request->input('company_id')
+            ?? \App\Helpers\ScopeHelper::companyId($request)
+            ?? $request->user()?->company_id;
+
+        if (!$companyId) {
+            return response()->json([
+                'success' => false,
+                'message' => 'company_id es requerido o el usuario debe tener empresa asignada.',
+            ], 422);
+        }
+
+        $date = Carbon::parse($request->input('date'));
+        $duration = (int) $request->input('duration', 60);
+
+        /** @var AvailabilityService $availabilityService */
+        $availabilityService = app(AvailabilityService::class);
+        $result = $availabilityService->getSlots(
+            (int) $companyId,
+            $date,
+            $duration,
+            $request->input('district'),
+            $request->input('vehicle_id') ? (int) $request->input('vehicle_id') : null,
+            $request->input('exclude_appointment_id') ? (int) $request->input('exclude_appointment_id') : null
+        );
+
+        return response()->json([
+            'success' => true,
+            'data' => $result,
+        ]);
     }
 
     /**
@@ -129,6 +190,10 @@ class AppointmentController extends Controller
                 'recurrence_occurrences' => 'nullable|integer|min:1|max:52',
                 'recurrence_days' => 'nullable|array',
                 'recurrence_fixed_time' => 'nullable|boolean',
+                'booking_source' => 'nullable|string|in:staff,portal_auth,public_guest',
+                'advance_paid' => 'nullable|boolean',
+                'advance_payment_method' => 'nullable|string|max:50',
+                'advance_payment_reference' => 'nullable|string|max:100',
             ]);
 
             if ($validator->fails()) {
@@ -146,38 +211,11 @@ class AppointmentController extends Controller
             }
             $data['address'] = $data['address'] ?? '';
 
-            // 1. Validar Horario Laboral
             $date = Carbon::parse($data['date']);
-            $dayOfWeek = strtolower($date->format('l'));
-            $dayNamesEs = [
-                'monday' => 'lunes', 'tuesday' => 'martes', 'wednesday' => 'miércoles',
-                'thursday' => 'jueves', 'friday' => 'viernes', 'saturday' => 'sábado', 'sunday' => 'domingo',
-            ];
-            $dayLabel = $dayNamesEs[$dayOfWeek] ?? $dayOfWeek;
-            $config = CompanyConfiguration::where('company_id', $data['company_id'])
-                ->where('config_type', 'document_settings') // As defined in seeder
-                ->first();
+            $duration = (int) ($data['duration'] ?? 60);
+            $districtForAvailability = $data['district'] ?? null;
 
-            if ($config && isset($config->config_data['working_hours'])) {
-                $hours = $config->config_data['working_hours'][$dayOfWeek] ?? null;
-                if ($hours) {
-                    if (!$hours['open']) {
-                        return response()->json(['success' => false, 'message' => "La empresa no trabaja los $dayLabel."], 422);
-                    }
-                    $appointmentTime = Carbon::createFromFormat('H:i', $data['time']);
-                    $startTime = Carbon::createFromFormat('H:i', $hours['start']);
-                    $endTime = Carbon::createFromFormat('H:i', $hours['end']);
-
-                    if ($appointmentTime->lt($startTime) || $appointmentTime->gt($endTime)) {
-                        return response()->json([
-                            'success' => false,
-                            'message' => "Horario fuera de jornada laboral ($hours[start] - $hours[end])."
-                        ], 422);
-                    }
-                }
-            }
-
-            // 2. Auto-asignar vehículo por cobertura si no se envió
+            // 1. Auto-asignar vehículo por cobertura si no se envió
             if (empty($data['vehicle_id'])) {
                 $clientForCoverage = Client::find($data['client_id']);
                 $districtForCoverage = $data['district'] ?? $clientForCoverage?->distrito;
@@ -196,29 +234,29 @@ class AppointmentController extends Controller
                 }
             }
 
-            // 3. Validar disponibilidad y cobertura del vehículo (si hay vehículo asignado)
-            if (!empty($data['vehicle_id'])) {
-                $vehicle = Vehicle::find($data['vehicle_id']);
-                if ($vehicle) {
-                    $client = Client::find($data['client_id']);
-                    $district = $data['district'] ?? $client?->distrito;
-                    /** @var VehicleCoverageService $coverageService */
-                    $coverageService = app(VehicleCoverageService::class);
-                    $coverage = $coverageService->vehicleCoversAppointment(
-                        $vehicle,
-                        $client,
-                        $date,
-                        $data['time'],
-                        $district
-                    );
+            // 2. Validar disponibilidad unificada (horario + cobertura + ocupación)
+            $clientForAvailability = Client::find($data['client_id']);
+            if (!$districtForAvailability) {
+                $districtForAvailability = $clientForAvailability?->distrito;
+            }
 
-                    if (!$coverage['covers']) {
-                        return response()->json([
-                            'success' => false,
-                            'message' => $coverage['message'] ?? 'El vehículo no está disponible para esta cita.',
-                        ], 422);
-                    }
-                }
+            /** @var AvailabilityService $availabilityService */
+            $availabilityService = app(AvailabilityService::class);
+            $slotCheck = $availabilityService->validateSlot(
+                (int) $data['company_id'],
+                $date,
+                $data['time'],
+                $duration,
+                $districtForAvailability,
+                !empty($data['vehicle_id']) ? (int) $data['vehicle_id'] : null
+            );
+
+            if (!$slotCheck['valid']) {
+                return response()->json([
+                    'success' => false,
+                    'message' => $slotCheck['message'] ?? 'Horario no disponible.',
+                    'reason' => $slotCheck['reason'] ?? null,
+                ], 422);
             }
 
             // 3. Validar Stock si hay service_id
@@ -256,9 +294,6 @@ class AppointmentController extends Controller
                 $data['client_category'] = $client->nivel_fidelizacion;
             }
 
-            $data['status'] = 'Pendiente';
-            $data['payment_status'] = 'Pendiente';
-
             // Calcular total desde items si existen, sino usar price del request
             $items = $request->input('items', []);
             if (!empty($items)) {
@@ -272,6 +307,49 @@ class AppointmentController extends Controller
             }
 
             $data['total'] = $data['price'] - ($data['discount'] ?? 0);
+
+            /** @var PortalBookingService $portalService */
+            $portalService = app(PortalBookingService::class);
+            $bookingSource = $request->input('booking_source', PortalBookingService::SOURCE_STAFF);
+            $data['booking_source'] = $bookingSource;
+
+            if ($bookingSource === PortalBookingService::SOURCE_PORTAL_AUTH) {
+                $settings = $portalService->getSettings((int) $data['company_id']);
+                $clientForPortal = $client ?? Client::find($data['client_id']);
+                $portalCheck = $portalService->canClientBook($clientForPortal, $settings);
+                if (!$portalCheck['allowed']) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => $portalCheck['message'],
+                    ], 403);
+                }
+
+                $advanceAmount = $portalService->calculateAdvance((float) $data['total'], $settings);
+                $data['advance_amount'] = $advanceAmount;
+                $advancePaid = $request->boolean('advance_paid', false);
+                $resolved = $portalService->resolveStatusForPortalBooking(
+                    $clientForPortal,
+                    $settings,
+                    $advancePaid,
+                    $advanceAmount
+                );
+                $data['status'] = $resolved['status'];
+                $data['payment_status'] = $resolved['payment_status'];
+                if (!empty($resolved['confirmed_at'])) {
+                    $data['confirmed_at'] = $resolved['confirmed_at'];
+                }
+                if ($advancePaid) {
+                    $data['advance_paid_at'] = now();
+                    $data['advance_payment_method'] = $request->input('advance_payment_method', 'Tarjeta');
+                    $data['advance_payment_reference'] = $request->input('advance_payment_reference');
+                }
+                if (empty($data['tracking_code'])) {
+                    $data['tracking_code'] = $portalService->generateTrackingCode();
+                }
+            } else {
+                $data['status'] = 'Pendiente';
+                $data['payment_status'] = 'Pendiente';
+            }
 
             $appointments = [];
             $is_recurring = $request->input('is_recurring', false);
@@ -329,11 +407,20 @@ class AppointmentController extends Controller
 
                 DB::commit();
 
+                $createdAppointment = $is_recurring ? $appointments[0] : $appointment;
+                if ($bookingSource === PortalBookingService::SOURCE_PORTAL_AUTH && $createdAppointment) {
+                    $createdAppointment->load(['client', 'pet']);
+                    $event = $createdAppointment->status === 'Pendiente' ? 'pending_approval' : 'created';
+                    $portalService->notifyStaffPortalBooking($createdAppointment, $event);
+                }
+
                 return response()->json([
                     'success' => true,
                     'message' => $is_recurring ? 'Serie de citas creada exitosamente' : 'Cita creada exitosamente',
                     'data' => $is_recurring ? $appointments[0]->load(['client', 'pet', 'vehicle', 'user']) : $appointment->load(['client', 'pet', 'vehicle', 'user']),
-                    'series_count' => count($appointments)
+                    'series_count' => count($appointments),
+                    'advance_amount' => $createdAppointment?->advance_amount,
+                    'tracking_code' => $createdAppointment?->tracking_code,
                 ], 201);
 
             } catch (Exception $e) {
@@ -402,7 +489,7 @@ class AppointmentController extends Controller
                 'duration' => 'nullable|integer|min:15|max:480',
                 'price' => 'nullable|numeric|min:0',
                 'discount' => 'nullable|numeric|min:0',
-                'payment_status' => 'nullable|string|in:Pendiente,Pagado,Reembolsado',
+                'payment_status' => 'nullable|string|in:Pendiente,Parcial,Pagado,Reembolsado',
                 'payment_method' => 'nullable|string|in:Efectivo,Tarjeta,Yape,Plin,Transferencia',
                 'notes' => 'nullable|string',
                 'cancellation_reason' => 'nullable|string',
@@ -625,40 +712,70 @@ class AppointmentController extends Controller
             if ($status === 'Completada' && !$appointment->completed_at) {
                 $data['completed_at'] = now();
 
-                // Procesar deducción de stock si hay un servicio asociado
+                $productService = app(\App\Services\ProductService::class);
+
+                // Deducción por insumos del servicio (modelo Services.required_products)
                 if ($appointment->service_id) {
                     $service = Service::find($appointment->service_id);
                     if ($service && !empty($service->required_products)) {
                         foreach ($service->required_products as $req) {
                             $product = Product::find($req['product_id']);
                             if ($product) {
-                                // 1. Deduct stock
-                                $product->decrement('stock', $req['quantity']);
-
-                                // 2. Record Stock Movement (Kardex)
-                                StockMovement::create([
-                                    'company_id' => $appointment->company_id,
-                                    'branch_id' => $appointment->branch_id,
-                                    'product_id' => $product->id,
-                                    'movement_date' => now(),
-                                    'type' => 'Salida',
-                                    'quantity' => $req['quantity'],
-                                    'unit_cost' => $product->unit_price ?? 0,
-                                    'total_cost' => ($product->unit_price ?? 0) * $req['quantity'],
-                                    'source_type' => 'App\Models\Appointment',
-                                    'source_id' => $appointment->id,
-                                    'notes' => 'Salida automática por cita completada: ' . $appointment->id,
-                                    'created_by' => auth()->id() ?? 1,
-                                ]);
-
-                                Log::info("Stock deducido por cita completada", [
-                                    'appointment_id' => $appointment->id,
-                                    'product_id' => $product->id,
-                                    'quantity' => $req['quantity']
-                                ]);
+                                $qty = (float) ($req['quantity'] ?? 0);
+                                if ($qty <= 0) {
+                                    continue;
+                                }
+                                $productService->adjustStock(
+                                    $product,
+                                    null,
+                                    $qty,
+                                    'OUT',
+                                    'Salida por cita completada #' . $appointment->id,
+                                    [
+                                        'wrap_transaction' => false,
+                                        'source_type' => 'appointment',
+                                        'source_id' => $appointment->id,
+                                        'branch_id' => $appointment->branch_id,
+                                        'unit_cost' => (float) ($product->cost_price ?? 0),
+                                        'created_by' => auth()->id(),
+                                    ]
+                                );
                             }
                         }
                     }
+                }
+
+                // Deducción por ítems producto vendidos en la cita
+                $appointment->loadMissing('items');
+                foreach ($appointment->items as $item) {
+                    $itemType = strtoupper((string) ($item->item_type ?? ''));
+                    if (! in_array($itemType, ['PRODUCTO', 'PRODUCT'], true)) {
+                        continue;
+                    }
+                    $productId = $item->product_id ?? $item->item_id ?? null;
+                    if (! $productId) {
+                        continue;
+                    }
+                    $product = Product::find($productId);
+                    $qty = (float) ($item->quantity ?? 1);
+                    if (! $product || $qty <= 0) {
+                        continue;
+                    }
+                    $productService->adjustStock(
+                        $product,
+                        null,
+                        $qty,
+                        'OUT',
+                        'Salida por producto en cita #' . $appointment->id,
+                        [
+                            'wrap_transaction' => false,
+                            'source_type' => 'appointment_item',
+                            'source_id' => $appointment->id,
+                            'branch_id' => $appointment->branch_id,
+                            'unit_cost' => (float) ($product->cost_price ?? 0),
+                            'created_by' => auth()->id(),
+                        ]
+                    );
                 }
             }
             if ($status === 'Cancelada' && !$appointment->cancelled_at) {
@@ -676,6 +793,11 @@ class AppointmentController extends Controller
                 'data' => $appointment->load(['client', 'pet', 'vehicle', 'user', 'items.product'])
             ]);
 
+        } catch (\InvalidArgumentException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], 422);
         } catch (Exception $e) {
             Log::error("Error al cambiar estado de cita", [
                 'appointment_id' => $id,
@@ -718,6 +840,8 @@ class AppointmentController extends Controller
                 'data' => $appointment
             ]);
 
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            throw $e;
         } catch (Exception $e) {
             return response()->json([
                 'success' => false,
@@ -755,6 +879,8 @@ class AppointmentController extends Controller
                 'data' => $appointment->load(['client', 'pet', 'vehicle', 'user', 'items.product'])
             ]);
 
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            throw $e;
         } catch (Exception $e) {
             return response()->json([
                 'success' => false,
@@ -857,6 +983,181 @@ class AppointmentController extends Controller
         }
     }
 
+    /**
+     * Opciones de anulación (≤7 días desde emisión) / nota de crédito.
+     */
+    public function documentCorrectionOptions(
+        Appointment $appointment,
+        AppointmentDocumentCorrectionService $correction
+    ): JsonResponse {
+        try {
+            return response()->json([
+                'success' => true,
+                'data' => $correction->options($appointment),
+            ]);
+        } catch (Exception $e) {
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 422);
+        }
+    }
+
+    /**
+     * Anular CPE de la cita (ventana 7 días desde fecha_emision).
+     * No modifica payment_status.
+     */
+    public function voidDocument(
+        Request $request,
+        Appointment $appointment,
+        AppointmentDocumentCorrectionService $correction
+    ): JsonResponse {
+        $validator = Validator::make($request->all(), [
+            'motivo' => 'nullable|string|max:500',
+            'send_to_sunat' => 'nullable|boolean',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json(['success' => false, 'errors' => $validator->errors()], 422);
+        }
+
+        try {
+            $result = $correction->voidDocument($appointment, [
+                'motivo' => $request->input('motivo'),
+                'send_to_sunat' => $request->has('send_to_sunat')
+                    ? $request->boolean('send_to_sunat')
+                    : null,
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Comprobante anulado. El cobro de la cita no se modificó.',
+                'data' => $result,
+            ]);
+        } catch (Exception $e) {
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 422);
+        }
+    }
+
+    /**
+     * Emite nota de crédito total o parcial sobre el CPE de la cita.
+     * No modifica payment_status ni reabre cobro (regla 4A).
+     */
+    public function issueCreditNote(
+        Request $request,
+        Appointment $appointment,
+        AppointmentDocumentCorrectionService $correction
+    ): JsonResponse {
+        $validator = Validator::make($request->all(), [
+            'mode' => 'required|in:total,partial',
+            'cod_motivo' => 'nullable|string|max:2',
+            'des_motivo' => 'nullable|string|max:250',
+            'serie' => 'nullable|string|max:4',
+            'send_to_sunat' => 'nullable|boolean',
+            'detalles' => 'nullable|array|min:1',
+            'detalles.*.codigo' => 'nullable|string|max:30',
+            'detalles.*.descripcion' => 'required_with:detalles|string|max:255',
+            'detalles.*.cantidad' => 'required_with:detalles|numeric|min:0.01',
+            'detalles.*.mto_valor_unitario' => 'required_with:detalles|numeric|min:0.01',
+            'detalles.*.unidad' => 'nullable|string|max:10',
+            'detalles.*.tip_afe_igv' => 'nullable|string|max:2',
+            'detalles.*.porcentaje_igv' => 'nullable|numeric|min:0',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json(['success' => false, 'errors' => $validator->errors()], 422);
+        }
+
+        try {
+            $result = $correction->issueCreditNote($appointment, [
+                'mode' => $request->input('mode'),
+                'cod_motivo' => $request->input('cod_motivo'),
+                'des_motivo' => $request->input('des_motivo'),
+                'serie' => $request->input('serie'),
+                'detalles' => $request->input('detalles'),
+                'send_to_sunat' => $request->boolean('send_to_sunat'),
+            ]);
+
+            $cn = $result['credit_note'];
+            $numero = $cn->numero_completo ?? ($cn->serie . '-' . $cn->correlativo);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Nota de crédito emitida: ' . $numero . '. El cobro de la cita no se modificó.',
+                'data' => $result,
+            ], 201);
+        } catch (Exception $e) {
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 422);
+        }
+    }
+
+    /**
+     * Registrar adelanto simulado de reserva portal (Fase 1).
+     */
+    public function payAdvance(Request $request, Appointment $appointment): JsonResponse
+    {
+        try {
+            $validator = Validator::make($request->all(), [
+                'payment_method' => 'required|string|in:Tarjeta,Yape,Plin,Transferencia,Efectivo',
+                'reference' => 'nullable|string|max:100',
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Errores de validación',
+                    'errors' => $validator->errors(),
+                ], 422);
+            }
+
+            if ($appointment->booking_source !== PortalBookingService::SOURCE_PORTAL_AUTH) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Solo aplica a citas creadas desde el portal autenticado',
+                ], 422);
+            }
+
+            if ($appointment->advance_paid_at) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'El adelanto ya fue registrado',
+                ], 409);
+            }
+
+            /** @var PortalBookingService $portalService */
+            $portalService = app(PortalBookingService::class);
+            $settings = $portalService->getSettings((int) $appointment->company_id);
+            $advanceAmount = (float) ($appointment->advance_amount ?? 0);
+
+            if ($advanceAmount <= 0) {
+                $advanceAmount = $portalService->calculateAdvance((float) $appointment->total, $settings);
+                $appointment->advance_amount = $advanceAmount;
+                $appointment->save();
+            }
+
+            $updated = $portalService->applyAdvancePayment(
+                $appointment,
+                $request->input('payment_method'),
+                $request->input('reference')
+            );
+
+            return response()->json([
+                'success' => true,
+                'message' => $updated->status === 'Confirmada'
+                    ? 'Adelanto registrado. Tu cita fue confirmada.'
+                    : 'Adelanto registrado. El equipo validará tu cita.',
+                'data' => $updated->load(['client', 'pet', 'vehicle']),
+            ]);
+        } catch (Exception $e) {
+            Log::error('Error al registrar adelanto portal', [
+                'appointment_id' => $appointment->id,
+                'error' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al registrar adelanto: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
     public function registerPayment(Request $request, Appointment $appointment): JsonResponse
     {
         try {
@@ -871,10 +1172,6 @@ class AppointmentController extends Controller
                 return response()->json(['success' => false, 'errors' => $validator->errors()], 422);
             }
 
-            if ($appointment->payment_status === 'Pagado') {
-                return response()->json(['success' => false, 'message' => 'La cita ya está pagada'], 409);
-            }
-
             if (!in_array($appointment->status, ['Completada', 'En Proceso', 'Confirmada'], true)) {
                 return response()->json([
                     'success' => false,
@@ -882,20 +1179,55 @@ class AppointmentController extends Controller
                 ], 422);
             }
 
-            $amount = (float) ($request->input('amount') ?? $appointment->total);
+            /** @var AppointmentPaymentStatusService $paymentStatus */
+            $paymentStatus = app(AppointmentPaymentStatusService::class);
+            $remaining = $paymentStatus->remainingAmount($appointment);
+
+            if ($remaining <= AppointmentPaymentStatusService::EPSILON) {
+                return response()->json(['success' => false, 'message' => 'La cita ya está pagada'], 409);
+            }
+
             $method = $request->input('payment_method');
             $cashSessionId = $request->input('cash_session_id');
+            $requestedAmount = $request->filled('amount')
+                ? (float) $request->input('amount')
+                : $remaining;
+            // No exigir más que el saldo; evita cobrar de más por defecto.
+            $amount = round(min($requestedAmount, $remaining), 2);
 
-            DB::transaction(function () use ($appointment, $amount, $method, $cashSessionId, $request) {
-                $appointment->update([
-                    'payment_status' => 'Pagado',
-                    'payment_method' => $method,
-                    'status' => $appointment->status === 'Confirmada' ? 'Completada' : $appointment->status,
-                ]);
+            if ($amount <= AppointmentPaymentStatusService::EPSILON) {
+                return response()->json(['success' => false, 'message' => 'Monto de cobro inválido'], 422);
+            }
 
+            DB::transaction(function () use ($appointment, $amount, $method, $cashSessionId, $request, $paymentStatus) {
                 $session = $cashSessionId
                     ? CashSession::where('id', $cashSessionId)->where('status', 'OPEN')->first()
                     : null;
+
+                Payment::create([
+                    'company_id' => $appointment->company_id,
+                    'branch_id' => $appointment->branch_id,
+                    'invoice_id' => $appointment->invoice_id,
+                    'appointment_id' => $appointment->id,
+                    'user_id' => Auth::id(),
+                    'cash_session_id' => $session?->id,
+                    'amount' => $amount,
+                    'fee' => 0,
+                    'net_amount' => $amount,
+                    'currency' => 'PEN',
+                    'method' => $paymentStatus->mapCashMethodToPayment($method),
+                    'gateway' => 'manual',
+                    'status' => 'completed',
+                    'reference' => $request->input('reference'),
+                    'paid_at' => now(),
+                    'notes' => 'Cobro cita #' . $appointment->id,
+                    'metadata' => [
+                        'source' => 'cash_register',
+                        'appointment_id' => $appointment->id,
+                        'tracking_code' => $appointment->tracking_code,
+                        'payment_method_label' => $method,
+                    ],
+                ]);
 
                 CashMovement::create([
                     'company_id' => $appointment->company_id,
@@ -915,12 +1247,27 @@ class AppointmentController extends Controller
                         'tracking_code' => $appointment->tracking_code,
                     ],
                 ]);
+
+                $fresh = $appointment->fresh();
+                $status = $paymentStatus->resolveStatus($fresh);
+                $fresh->update([
+                    'payment_status' => $status,
+                    'payment_method' => $method,
+                    'status' => $fresh->status === 'Confirmada' ? 'Completada' : $fresh->status,
+                ]);
             });
+
+            $updated = $appointment->fresh()->load(['client', 'pet', 'vehicle']);
 
             return response()->json([
                 'success' => true,
                 'message' => 'Cobro registrado',
-                'data' => $appointment->fresh()->load(['client', 'pet', 'vehicle']),
+                'data' => $updated,
+                'meta' => [
+                    'paid_amount' => $paymentStatus->paidAmount($updated),
+                    'remaining_amount' => $paymentStatus->remainingAmount($updated),
+                    'payment_status' => $updated->payment_status,
+                ],
             ]);
         } catch (Exception $e) {
             return response()->json([

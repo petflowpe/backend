@@ -59,16 +59,25 @@ class AuditLogController extends Controller
     public static function log(string $action, ?string $modelType = null, ?int $modelId = null, ?array $oldValues = null, ?array $newValues = null, ?string $description = null): void
     {
         try {
-            AuditLog::create([
-                'user_id' => auth()->id(),
+            $authUser = auth()->user();
+            $companyId = $authUser?->company_id
+                ?? request()?->attributes?->get('scope_company_id')
+                ?? null;
+
+            // Insert directo para no chocar con el global scope al guardar logs de super_admin (sin company).
+            \Illuminate\Support\Facades\DB::table('audit_logs')->insert([
+                'user_id' => $authUser?->id,
+                'company_id' => $companyId,
                 'action' => $action,
                 'model_type' => $modelType,
                 'model_id' => $modelId,
-                'old_values' => $oldValues,
-                'new_values' => $newValues,
+                'old_values' => $oldValues ? json_encode($oldValues) : null,
+                'new_values' => $newValues ? json_encode($newValues) : null,
                 'ip' => request()?->ip(),
                 'user_agent' => request()?->userAgent(),
                 'description' => $description,
+                'created_at' => now(),
+                'updated_at' => now(),
             ]);
         } catch (\Throwable $e) {
             Log::warning('Audit log failed', ['error' => $e->getMessage()]);

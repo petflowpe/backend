@@ -1,13 +1,18 @@
 <?php
 
+use App\Models\Role;
 use App\Models\User;
 use Illuminate\Support\Facades\Hash;
 
 beforeEach(function () {
+    $role = Role::firstOrCreate(
+        ['name' => 'super_admin'],
+        ['display_name' => 'Super Admin', 'permissions' => ['*'], 'is_system' => true, 'active' => true]
+    );
     $this->user = User::factory()->create([
         'email' => 'reports@test.com',
         'password' => Hash::make('password'),
-        'role_id' => null,
+        'role_id' => $role->id,
         'company_id' => null,
         'active' => true,
     ]);

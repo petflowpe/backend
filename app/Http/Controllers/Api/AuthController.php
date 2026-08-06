@@ -79,15 +79,55 @@ class AuthController extends Controller
 
     /**
      * Login - Autenticación
+     *
+     * Acepta cualquiera de estas combinaciones en el body:
+     *   - { email, password }
+     *   - { document_number, password }                (busca por document_number)
+     *   - { document_type, document_number, password } (busca por par tipo+número)
+     *   - { identifier, password }                     (autodetecta: si contiene @ → email, si no → documento)
      */
     public function login(Request $request)
     {
         $request->validate([
-            'email' => 'required|email',
+            'email' => 'nullable|email',
+            'document_type' => 'nullable|in:DNI,CE,RUC,PASS',
+            'document_number' => 'nullable|string|max:30',
+            'identifier' => 'nullable|string|max:255',
             'password' => 'required',
         ]);
 
-        $user = User::where('email', $request->email)->first();
+        $identifier = trim((string) $request->input('identifier', ''));
+        $email = trim((string) $request->input('email', ''));
+        $docNumber = trim((string) $request->input('document_number', ''));
+        $docType = $request->input('document_type');
+
+        // Autodetectar a partir de `identifier` si vino sin email/documento.
+        if ($email === '' && $docNumber === '' && $identifier !== '') {
+            if (str_contains($identifier, '@')) {
+                $email = $identifier;
+            } else {
+                $docNumber = $identifier;
+            }
+        }
+
+        if ($email === '' && $docNumber === '') {
+            return response()->json([
+                'message' => 'Debe proporcionar correo electrónico o número de documento',
+                'status' => 'error',
+            ], 422);
+        }
+
+        $query = User::query();
+        if ($email !== '') {
+            $query->where('email', $email);
+        } else {
+            $query->where('document_number', $docNumber);
+            if ($docType) {
+                $query->where('document_type', $docType);
+            }
+        }
+
+        $user = $query->first();
 
         if (!$user || !Hash::check($request->password, $user->password)) {
             return response()->json([
@@ -123,6 +163,8 @@ class AuthController extends Controller
                 'id' => $user->id,
                 'name' => $user->name,
                 'email' => $user->email,
+                'document_type' => $user->document_type,
+                'document_number' => $user->document_number,
                 'role' => $user->role ? [
                     'name' => $user->role->name,
                     'display_name' => $user->role->display_name,
@@ -251,15 +293,21 @@ class AuthController extends Controller
         $userCount = User::count();
         $isInitialized = $userCount > 0;
 
-        return response()->json([
+        $payload = [
             'system_initialized' => $isInitialized,
-            'user_count' => $userCount,
-            'roles_count' => Role::count(),
             'app_name' => config('app.name'),
-            'app_env' => config('app.env'),
-            'app_debug' => config('app.debug'),
             'database_connected' => $this->checkDatabaseConnection(),
-        ]);
+        ];
+
+        // En producción no exponer env/debug/conteos en endpoint público.
+        if (!app()->environment('production') || config('app.debug')) {
+            $payload['user_count'] = $userCount;
+            $payload['roles_count'] = Role::count();
+            $payload['app_env'] = config('app.env');
+            $payload['app_debug'] = config('app.debug');
+        }
+
+        return response()->json($payload);
     }
 
     /**
@@ -293,7 +341,6 @@ class AuthController extends Controller
         }
 
         $token = Str::random(64);
-        $expiresAt = Carbon::now()->addMinutes(config('auth.passwords.users.expire', 60));
 
         DB::table('password_reset_tokens')->updateOrInsert(
             ['email' => $request->email],
@@ -303,24 +350,31 @@ class AuthController extends Controller
             ]
         );
 
-        // Opcional: enviar email con el enlace (requiere configurar mail)
-        $resetUrl = (config('app.frontend_url') ?: config('app.url')) . '/reset-password?token=' . urlencode($token) . '&email=' . urlencode($request->email);
+        $frontendBase = rtrim((string) (config('app.frontend_url') ?: config('app.url')), '/');
+        $resetUrl = $frontendBase . '/reset-password?token=' . urlencode($token) . '&email=' . urlencode($request->email);
         $expireMinutes = config('auth.passwords.users.expire', 60);
-        $body = "Use este enlace para restablecer su contraseña (válido {$expireMinutes} minutos): {$resetUrl}. Si no solicitó esto, ignore este correo.";
+        $body = "Hola,\n\n"
+            . "Recibimos una solicitud para restablecer tu contraseña en " . config('app.name') . ".\n\n"
+            . "Usa este enlace (válido {$expireMinutes} minutos):\n{$resetUrl}\n\n"
+            . "Si no solicitaste esto, ignora este correo.\n";
+
+        $mailSent = false;
         try {
             \Illuminate\Support\Facades\Mail::raw($body, function ($message) use ($user) {
                 $message->to($user->email)
                     ->subject('Recuperación de contraseña - ' . config('app.name'));
             });
+            $mailSent = true;
         } catch (\Throwable $e) {
             \Illuminate\Support\Facades\Log::warning('No se pudo enviar email de recuperación: ' . $e->getMessage());
-            // En desarrollo se puede devolver el token en la respuesta (no en producción)
-            if (config('app.debug')) {
+            // Solo en debug se expone el token/URL (nunca en producción endurecida).
+            if (config('app.debug') && !app()->environment('production')) {
                 return response()->json([
-                    'message' => 'Token generado. En producción configure mail. Token (solo debug): ' . $token,
+                    'message' => 'Token generado. Configure SMTP en el servidor para envío real. Token (solo debug): ' . $token,
                     'status' => 'ok',
                     'token' => $token,
                     'email' => $request->email,
+                    'reset_url' => $resetUrl,
                 ]);
             }
         }
@@ -328,6 +382,7 @@ class AuthController extends Controller
         return response()->json([
             'message' => 'Si el correo existe, recibirá instrucciones para restablecer su contraseña.',
             'status' => 'ok',
+            'mail_dispatched' => $mailSent,
         ]);
     }
 

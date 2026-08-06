@@ -785,9 +785,14 @@ class PetController extends Controller
                     'species' => $row->species,
                     'total' => (int) $row->total,
                 ])->values();
+            // Multi-tenant guard: DB::table() salta el global scope; aplicamos filtro manual.
+            $authUser = $request->user();
+            $companyId = $authUser && !$authUser->hasRole('super_admin') ? (int) ($authUser->company_id ?? 0) : null;
+
             $duplicateSpecies = DB::table('pet_configurations')
                 ->selectRaw('LOWER(TRIM(name)) as key_name, COUNT(*) as total')
                 ->where('type', 'species')
+                ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
                 ->groupBy('key_name')
                 ->having('total', '>', 1)
                 ->get();
@@ -796,6 +801,7 @@ class PetController extends Controller
                 ->where(function ($q) {
                     $q->whereIn('type', ['dog_breed', 'cat_breed'])->orWhere('type', 'like', 'breed_%');
                 })
+                ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
                 ->groupBy('type', 'key_name')
                 ->having('total', '>', 1)
                 ->get();

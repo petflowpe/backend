@@ -99,6 +99,7 @@ class ClientController extends Controller
                 'fecha_ultima_visita' => 'nullable|date',
                 'fecha_registro' => 'nullable|date',
                 'activo' => 'boolean',
+                'registration_source' => 'nullable|string|in:portal,staff,import',
                 'pets' => 'nullable|array',
                 'pets.*.name' => 'required|string|max:255',
                 'pets.*.species' => 'required|string|in:Perro,Gato,Otro',
@@ -140,9 +141,21 @@ class ClientController extends Controller
             unset($data['pets']);
 
             if (empty($data['company_id'])) {
-                $data['company_id'] = 1;
+                $data['company_id'] = \App\Helpers\ScopeHelper::companyId($request);
             }
-            $companyId = $data['company_id'];
+            if (empty($data['company_id']) && $request->user()?->hasRole('super_admin')) {
+                $activeCompanyIds = Company::where('activo', true)->pluck('id');
+                if ($activeCompanyIds->count() === 1) {
+                    $data['company_id'] = $activeCompanyIds->first();
+                }
+            }
+            if (empty($data['company_id'])) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'No se pudo determinar la empresa del cliente. Indique company_id.',
+                ], 422);
+            }
+            $companyId = (int) $data['company_id'];
 
             // Si se proporciona company_id, verificar que la empresa existe y está activa
             if ($companyId) {
@@ -204,6 +217,13 @@ class ClientController extends Controller
                     ], 409);
                 }
             }
+
+            if (($data['registration_source'] ?? null) === 'portal') {
+                $data['portal_approval_status'] = 'pending';
+                $data['portal_booking_enabled'] = false;
+                $data['portal_registered_at'] = now();
+            }
+            unset($data['registration_source']);
 
             DB::beginTransaction();
             try {
@@ -338,7 +358,9 @@ class ClientController extends Controller
                 'nivel_fidelizacion' => 'nullable|string|in:Bronce,Plata,Oro,VIP',
                 'fecha_ultima_visita' => 'nullable|date',
                 'fecha_registro' => 'nullable|date',
-                'activo' => 'boolean'
+                'activo' => 'boolean',
+                'portal_booking_enabled' => 'sometimes|boolean',
+                'portal_approval_status' => 'sometimes|string|in:pending,approved,rejected',
             ]);
 
             if ($validator->fails()) {
@@ -732,7 +754,8 @@ class ClientController extends Controller
 
         $note = trim((string) $request->reason);
         if ($note !== '') {
-            $prefix = "[Fidelización {$delta >= 0 ? '+' : ''}{$delta}] ";
+            $sign = $delta >= 0 ? '+' : '';
+            $prefix = "[Fidelización {$sign}{$delta}] ";
             $client->update([
                 'notas' => trim($prefix . $note . "\n" . ($client->notas ?? '')),
             ]);

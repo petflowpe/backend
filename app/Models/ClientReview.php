@@ -5,8 +5,11 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
+use App\Models\Concerns\BelongsToCompany;
 class ClientReview extends Model
 {
+    use BelongsToCompany;
+
     protected $fillable = [
         'company_id',
         'client_id',

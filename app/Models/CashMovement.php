@@ -8,9 +8,10 @@ use App\Models\Company;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Model;
 
+use App\Models\Concerns\BelongsToCompany;
 class CashMovement extends Model
 {
-    use \Illuminate\Database\Eloquent\Factories\HasFactory;
+    use \Illuminate\Database\Eloquent\Factories\HasFactory, BelongsToCompany;
 
     protected $fillable = [
         'company_id',

@@ -6,9 +6,10 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
+use App\Models\Concerns\BelongsToCompany;
 class CreditNote extends Model
 {
-    use HasFactory;
+    use HasFactory, BelongsToCompany;
 
     protected $fillable = [
         'company_id',
@@ -90,7 +91,7 @@ class CreditNote extends Model
 
     public function getTipoDocumentoNameAttribute(): string
     {
-        return 'Nota de Crédito Electrónica';
+        return 'Nota de CrÃ©dito ElectrÃ³nica';
     }
 
     public function getDocumentoAfectadoNameAttribute(): string
@@ -105,17 +106,17 @@ class CreditNote extends Model
     public function getMotivoNameAttribute(): string
     {
         return match($this->cod_motivo) {
-            '01' => 'Anulación de la operación',
-            '02' => 'Anulación por error en el RUC',
-            '03' => 'Corrección por error en la descripción',
+            '01' => 'AnulaciÃ³n de la operaciÃ³n',
+            '02' => 'AnulaciÃ³n por error en el RUC',
+            '03' => 'CorrecciÃ³n por error en la descripciÃ³n',
             '04' => 'Descuento global',
-            '05' => 'Descuento por ítem',
-            '06' => 'Devolución total',
-            '07' => 'Devolución por ítem',
-            '08' => 'Bonificación',
-            '09' => 'Disminución en el valor',
+            '05' => 'Descuento por Ã­tem',
+            '06' => 'DevoluciÃ³n total',
+            '07' => 'DevoluciÃ³n por Ã­tem',
+            '08' => 'BonificaciÃ³n',
+            '09' => 'DisminuciÃ³n en el valor',
             '10' => 'Otros conceptos',
-            '11' => 'Ajustes de operaciones de exportación',
+            '11' => 'Ajustes de operaciones de exportaciÃ³n',
             '12' => 'Ajustes afectos al IVAP',
             '13' => 'Ajustes - montos y/o fechas de pago',
             default => $this->des_motivo

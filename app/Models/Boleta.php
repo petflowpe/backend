@@ -6,9 +6,10 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
+use App\Models\Concerns\BelongsToCompany;
 class Boleta extends Model
 {
-    use HasFactory;
+    use HasFactory, BelongsToCompany;
 
     protected $fillable = [
         'company_id',
@@ -92,7 +93,7 @@ class Boleta extends Model
 
     public function getTipoDocumentoNameAttribute(): string
     {
-        return 'Boleta de Venta Electrónica';
+        return 'Boleta de Venta ElectrÃ³nica';
     }
 
     public function getEstadoSunatColorAttribute(): string

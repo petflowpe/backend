@@ -6,9 +6,10 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
+use App\Models\Concerns\BelongsToCompany;
 class DebitNote extends Model
 {
-    use HasFactory;
+    use HasFactory, BelongsToCompany;
 
     protected $fillable = [
         'company_id',
@@ -77,7 +78,7 @@ class DebitNote extends Model
 
     public function getTipoDocumentoNameAttribute(): string
     {
-        return 'Nota de Débito Electrónica';
+        return 'Nota de DÃ©bito ElectrÃ³nica';
     }
 
     public function getDocumentoAfectadoNameAttribute(): string
@@ -95,7 +96,7 @@ class DebitNote extends Model
             '01' => 'Intereses por mora',
             '02' => 'Aumento en el valor',
             '03' => 'Penalidades/ otros conceptos',
-            '10' => 'Ajustes de operaciones de exportación',
+            '10' => 'Ajustes de operaciones de exportaciÃ³n',
             '11' => 'Ajustes afectos al IVAP',
             default => $this->des_motivo
         };

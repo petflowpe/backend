@@ -18,8 +18,15 @@ class Supplier extends Model
         'business_name',
         'document_type',
         'document_number',
+        'supplier_type',
         'email',
         'phone',
+        'contact_name',
+        'bank_name',
+        'bank_account',
+        'billing_email',
+        'credit_days',
+        'accounting_account_code',
         'address',
         'notes',
         'logo',
@@ -30,6 +37,7 @@ class Supplier extends Model
     protected $casts = [
         'active' => 'boolean',
         'sort_order' => 'integer',
+        'credit_days' => 'integer',
     ];
 
     public function company(): BelongsTo
@@ -40,6 +48,11 @@ class Supplier extends Model
     public function products(): HasMany
     {
         return $this->hasMany(Product::class);
+    }
+
+    public function purchaseOrders(): HasMany
+    {
+        return $this->hasMany(PurchaseOrder::class);
     }
 
     public function scopeActive($query)

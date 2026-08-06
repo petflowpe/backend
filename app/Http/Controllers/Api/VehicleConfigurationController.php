@@ -3,8 +3,10 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\Scopes\CompanyScope;
 use App\Models\VehicleConfiguration;
 use Exception;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
@@ -12,6 +14,15 @@ use Illuminate\Validation\Rule;
 
 class VehicleConfigurationController extends Controller
 {
+    /**
+     * Consultas sin CompanyScope para poder leer configs globales (company_id NULL)
+     * y mezclarlas con las del tenant activo.
+     */
+    private function configQuery(): Builder
+    {
+        return VehicleConfiguration::withoutGlobalScope(CompanyScope::class);
+    }
+
     public function getAll(Request $request): JsonResponse
     {
         try {
@@ -26,7 +37,7 @@ class VehicleConfigurationController extends Controller
             // terminó grabando en NULL vs company_id, o cuando el cliente no envía company_id explícito.
             $includeInactive = $request->boolean('include_inactive', false);
 
-            $globalQuery = VehicleConfiguration::query()->whereNull('company_id');
+            $globalQuery = $this->configQuery()->whereNull('company_id');
             if (! $includeInactive) {
                 $globalQuery->active();
             }
@@ -34,7 +45,7 @@ class VehicleConfigurationController extends Controller
 
             $companyRows = collect();
             if ($companyId) {
-                $companyQuery = VehicleConfiguration::query()->where('company_id', $companyId);
+                $companyQuery = $this->configQuery()->where('company_id', $companyId);
                 if (! $includeInactive) {
                     $companyQuery->active();
                 }
@@ -178,7 +189,7 @@ class VehicleConfigurationController extends Controller
             $items[] = $name;
         }
 
-        $deleteQuery = VehicleConfiguration::where('type', $dbType);
+        $deleteQuery = $this->configQuery()->where('type', $dbType);
         if ($companyId === null) {
             $deleteQuery->whereNull('company_id');
         } else {
@@ -187,7 +198,7 @@ class VehicleConfigurationController extends Controller
         $deleteQuery->delete();
 
         foreach ($items as $index => $name) {
-            VehicleConfiguration::create([
+            $this->configQuery()->create([
                 'company_id' => $companyId,
                 'type' => $dbType,
                 'name' => $name,
@@ -205,7 +216,7 @@ class VehicleConfigurationController extends Controller
 
     private function storeModelsByBrand($companyId, array $modelsByBrand): JsonResponse
     {
-        $deleteQuery = VehicleConfiguration::where('type', 'vehicle_model');
+        $deleteQuery = $this->configQuery()->where('type', 'vehicle_model');
         if ($companyId === null) {
             $deleteQuery->whereNull('company_id');
         } else {
@@ -230,7 +241,7 @@ class VehicleConfigurationController extends Controller
             }
 
             foreach ($clean as $index => $name) {
-                VehicleConfiguration::create([
+                $this->configQuery()->create([
                     'company_id' => $companyId,
                     'type' => 'vehicle_model',
                     'name' => $name,
@@ -268,7 +279,7 @@ class VehicleConfigurationController extends Controller
             $items[] = ['ruc' => $ruc, 'name' => $name, 'address' => $address, 'phone' => $phone];
         }
 
-        $deleteQuery = VehicleConfiguration::where('type', 'vehicle_workshop');
+        $deleteQuery = $this->configQuery()->where('type', 'vehicle_workshop');
         if ($companyId === null) {
             $deleteQuery->whereNull('company_id');
         } else {
@@ -277,7 +288,7 @@ class VehicleConfigurationController extends Controller
         $deleteQuery->delete();
 
         foreach ($items as $index => $w) {
-            VehicleConfiguration::create([
+            $this->configQuery()->create([
                 'company_id' => $companyId,
                 'type' => 'vehicle_workshop',
                 'name' => $w['name'],

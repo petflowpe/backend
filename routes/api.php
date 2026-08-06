@@ -126,6 +126,8 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'throttle:api', EnsureUserCompa
     Route::post('/users', [UserController::class, 'store']);
     Route::put('/users/{id}', [UserController::class, 'update']);
     Route::delete('/users/{id}', [UserController::class, 'destroy']);
+    Route::post('/users/{id}/reset-password', [UserController::class, 'resetPassword']);
+    Route::post('/users/{id}/revoke-tokens', [UserController::class, 'revokeTokens']);
 
     // Perfil y configuración del usuario autenticado
     Route::get('/profile', [ProfileController::class, 'show']);
@@ -202,6 +204,7 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'throttle:api', EnsureUserCompa
 
     // Empresas
     Route::apiResource('companies', CompanyController::class);
+    Route::post('/company-onboardings', [\App\Http\Controllers\Api\CompanyOnboardingController::class, 'store']);
     Route::post('/companies/{company}/activate', [CompanyController::class, 'activate']);
     Route::post('/companies/{company}/toggle-production', [CompanyController::class, 'toggleProductionMode']);
 
@@ -266,13 +269,14 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'throttle:api', EnsureUserCompa
 
     // ========================
     // PRODUCTOS / SERVICIOS (CATÁLOGO)
+    // Rutas estáticas ANTES del apiResource para no capturar "low-stock" como {product}
     // ========================
+    Route::get('/products/low-stock', [ProductController::class, 'getLowStock']);
+    Route::get('/companies/{company}/products/kpis', [ProductController::class, 'getKPIs']);
+    Route::get('/companies/{company}/products', [ProductController::class, 'getByCompany']);
     Route::apiResource('products', ProductController::class)->except(['destroy']);
     Route::delete('/products/{product}', [ProductController::class, 'destroy']);
     Route::post('/products/{product}/activate', [ProductController::class, 'activate']);
-    Route::get('/companies/{company}/products', [ProductController::class, 'getByCompany']);
-    Route::get('/companies/{company}/products/kpis', [ProductController::class, 'getKPIs']);
-    Route::get('/products/low-stock', [ProductController::class, 'getLowStock']);
     Route::post('/products/{product}/adjust-stock', [ProductController::class, 'adjustStock']);
     Route::get('/products/{product}/kardex', [KardexController::class, 'index']);
 
@@ -297,16 +301,16 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'throttle:api', EnsureUserCompa
     // ========================
     // MARCAS
     // ========================
+    Route::get('/brands/kpis', [BrandController::class, 'getKPIs']);
     Route::apiResource('brands', BrandController::class);
     Route::post('/brands/{brand}/toggle-active', [BrandController::class, 'toggleActive']);
-    Route::get('/brands/kpis', [BrandController::class, 'getKPIs']);
 
     // ========================
     // PROVEEDORES
     // ========================
+    Route::get('/suppliers/kpis', [SupplierController::class, 'getKPIs']);
     Route::apiResource('suppliers', SupplierController::class);
     Route::post('/suppliers/{supplier}/toggle-active', [SupplierController::class, 'toggleActive']);
-    Route::get('/suppliers/kpis', [SupplierController::class, 'getKPIs']);
 
     // ========================
     // ÓRDENES DE COMPRA
@@ -437,30 +441,27 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'throttle:api', EnsureUserCompa
     Route::prefix('credit-notes')->group(function () {
         Route::get('/', [CreditNoteController::class, 'index']);
         Route::post('/', [CreditNoteController::class, 'store']);
+        // Catálogo ANTES de /{id} para no capturar "catalogs" como id
+        Route::get('/catalogs/motivos', [CreditNoteController::class, 'getMotivos']);
         Route::get('/{id}', [CreditNoteController::class, 'show']);
         Route::post('/{id}/send-sunat', [CreditNoteController::class, 'sendToSunat']);
         Route::get('/{id}/download-xml', [CreditNoteController::class, 'downloadXml']);
         Route::get('/{id}/download-cdr', [CreditNoteController::class, 'downloadCdr']);
         Route::get('/{id}/download-pdf', [CreditNoteController::class, 'downloadPdf']);
         Route::post('/{id}/generate-pdf', [CreditNoteController::class, 'generatePdf']);
-
-        // Catálogo de motivos
-        Route::get('/catalogs/motivos', [CreditNoteController::class, 'getMotivos']);
     });
 
     // Notas de Débito
     Route::prefix('debit-notes')->group(function () {
         Route::get('/', [DebitNoteController::class, 'index']);
         Route::post('/', [DebitNoteController::class, 'store']);
+        Route::get('/catalogs/motivos', [DebitNoteController::class, 'getMotivos']);
         Route::get('/{id}', [DebitNoteController::class, 'show']);
         Route::post('/{id}/send-sunat', [DebitNoteController::class, 'sendToSunat']);
         Route::get('/{id}/download-xml', [DebitNoteController::class, 'downloadXml']);
         Route::get('/{id}/download-cdr', [DebitNoteController::class, 'downloadCdr']);
         Route::get('/{id}/download-pdf', [DebitNoteController::class, 'downloadPdf']);
         Route::post('/{id}/generate-pdf', [DebitNoteController::class, 'generatePdf']);
-
-        // Catálogo de motivos
-        Route::get('/catalogs/motivos', [DebitNoteController::class, 'getMotivos']);
     });
 
     // Comprobantes de Retención
@@ -544,14 +545,19 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'throttle:api', EnsureUserCompa
     // ========================
     // CITAS (APPOINTMENTS)
     // ========================
+    Route::get('/booking/availability', [AppointmentController::class, 'availability']);
     Route::apiResource('appointments', AppointmentController::class);
     Route::post('/appointments/{appointment}/reschedule', [AppointmentController::class, 'reschedule']);
     Route::post('/appointments/{appointment}/change-status', [AppointmentController::class, 'changeStatus']);
     Route::post('/appointments/{appointment}/send-reminder', [AppointmentController::class, 'sendReminder']);
     Route::post('/appointments/{appointment}/confirm', [AppointmentController::class, 'confirm']);
     Route::post('/appointments/{appointment}/register-payment', [AppointmentController::class, 'registerPayment']);
+    Route::post('/appointments/{appointment}/pay-advance', [AppointmentController::class, 'payAdvance']);
     Route::get('/appointments/{appointment}/billing-preview', [AppointmentController::class, 'billingPreview']);
     Route::post('/appointments/{appointment}/issue-document', [AppointmentController::class, 'issueDocument']);
+    Route::get('/appointments/{appointment}/document-correction-options', [AppointmentController::class, 'documentCorrectionOptions']);
+    Route::post('/appointments/{appointment}/void-document', [AppointmentController::class, 'voidDocument']);
+    Route::post('/appointments/{appointment}/credit-note', [AppointmentController::class, 'issueCreditNote']);
     Route::get('/clients/{clientId}/appointments', [AppointmentController::class, 'getByClient']);
     Route::get('/appointments/recurring-series/{seriesId}', [AppointmentController::class, 'getRecurringSeries']);
 

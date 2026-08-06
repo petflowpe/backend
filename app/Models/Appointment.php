@@ -9,12 +9,14 @@ use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 
+use App\Models\Concerns\BelongsToCompany;
 class Appointment extends Model
 {
-    use HasFactory;
+    use HasFactory, BelongsToCompany;
 
     protected $fillable = [
         'tracking_code',
+        'booking_source',
         'client_id',
         'pet_id',
         'company_id',
@@ -40,6 +42,10 @@ class Appointment extends Model
         'total',
         'payment_status',
         'payment_method',
+        'advance_amount',
+        'advance_paid_at',
+        'advance_payment_method',
+        'advance_payment_reference',
         'boleta_id',
         'invoice_id',
         'notes',
@@ -72,6 +78,8 @@ class Appointment extends Model
         'latitude' => 'decimal:8',
         'longitude' => 'decimal:8',
         'duration' => 'integer',
+        'advance_amount' => 'decimal:2',
+        'advance_paid_at' => 'datetime',
         'confirmed_at' => 'datetime',
         'completed_at' => 'datetime',
         'cancelled_at' => 'datetime',
@@ -138,6 +146,11 @@ class Appointment extends Model
     public function invoice(): BelongsTo
     {
         return $this->belongsTo(Invoice::class);
+    }
+
+    public function payments(): HasMany
+    {
+        return $this->hasMany(Payment::class);
     }
 
     public function hasElectronicDocument(): bool

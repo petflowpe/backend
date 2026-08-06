@@ -19,6 +19,49 @@ class VehicleController extends Controller
 {
     private const ALLOWED_STATUS_OVERRIDE = ['active', 'maintenance', 'out_of_service'];
 
+    private function computeVehicleStatus(array $arr, array $inProgressSet = []): string
+    {
+        $idKey = (string) ($arr['id'] ?? '');
+        $activo = (bool) ($arr['activo'] ?? true);
+        $status = $activo ? 'active' : 'out_of_service';
+
+        $override = $arr['status_override'] ?? null;
+        if (is_string($override) && in_array($override, self::ALLOWED_STATUS_OVERRIDE, true)) {
+            if (!$activo) {
+                return 'out_of_service';
+            }
+
+            return $override;
+        }
+
+        if ($activo && $idKey !== '' && isset($inProgressSet[$idKey])) {
+            return 'maintenance';
+        }
+
+        return $status;
+    }
+
+    private function vehicleToArrayWithStatus(Vehicle $vehicle, ?Request $request = null): array
+    {
+        $arr = $vehicle->toArray();
+        $inProgressSet = [];
+
+        $companyId = $request ? ScopeHelper::companyId($request) : null;
+        $hasInProgress = VehicleMaintenance::query()
+            ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
+            ->where('vehicle_id', $vehicle->id)
+            ->where('status', 'in_progress')
+            ->exists();
+
+        if ($hasInProgress) {
+            $inProgressSet[(string) $vehicle->id] = true;
+        }
+
+        $arr['status'] = $this->computeVehicleStatus($arr, $inProgressSet);
+
+        return $arr;
+    }
+
     /**
      * Listar vehículos
      */
@@ -58,25 +101,7 @@ class VehicleController extends Controller
             $items = array_map(function ($v) use ($inProgressSet) {
                 if (!$v) return $v;
                 $arr = $v->toArray();
-                $idKey = (string) ($arr['id'] ?? '');
-                $activo = (bool) ($arr['activo'] ?? true);
-                $status = $activo ? 'active' : 'out_of_service';
-
-                $override = $arr['status_override'] ?? null;
-                if (is_string($override) && in_array($override, self::ALLOWED_STATUS_OVERRIDE, true)) {
-                    // Nunca permitir "maintenance" si el vehículo está inactivo
-                    if (!$activo) {
-                        $status = 'out_of_service';
-                    } else {
-                        $status = $override;
-                    }
-                } else {
-                    // Fallback al status calculado por mantenimientos en progreso
-                    if ($activo && $idKey !== '' && isset($inProgressSet[$idKey])) {
-                        $status = 'maintenance';
-                    }
-                }
-                $arr['status'] = $status;
+                $arr['status'] = $this->computeVehicleStatus($arr, $inProgressSet);
                 return $arr;
             }, $vehicles->items());
 
@@ -183,7 +208,7 @@ class VehicleController extends Controller
 
             return response()->json([
                 'success' => true,
-                'data' => $vehicle
+                'data' => $this->vehicleToArrayWithStatus($vehicle, request())
             ]);
 
         } catch (Exception $e) {

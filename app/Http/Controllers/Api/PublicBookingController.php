@@ -9,6 +9,8 @@ use App\Models\CompanyConfiguration;
 use App\Models\Pet;
 use App\Models\Service;
 use App\Models\Vehicle;
+use App\Services\AvailabilityService;
+use App\Services\PortalBookingService;
 use App\Services\VehicleCoverageService;
 use Carbon\Carbon;
 use Exception;
@@ -39,11 +41,16 @@ class PublicBookingController extends Controller
             $workingHours = $config->config_data['working_hours'];
         }
 
+        /** @var PortalBookingService $portalService */
+        $portalService = app(PortalBookingService::class);
+        $portalSettings = $portalService->getSettings($companyId);
+
         return response()->json([
             'success' => true,
             'data' => [
                 'company_id' => $companyId,
                 'working_hours' => $workingHours,
+                'portal_settings' => $portalSettings,
             ],
         ]);
     }
@@ -114,51 +121,24 @@ class PublicBookingController extends Controller
         $duration = (int) $request->input('duration', 60);
         $district = $request->input('district');
 
-        $slots = $this->buildTimeSlots($companyId, $date, $duration);
-        $coverageNote = null;
-
-        if ($district) {
-            /** @var VehicleCoverageService $coverageService */
-            $coverageService = app(VehicleCoverageService::class);
-            $availableVehicles = $coverageService->getAvailableVehicles(
-                $companyId,
-                $district,
-                $date,
-                '09:00'
-            );
-
-            if ($availableVehicles->isEmpty()) {
-                $coverageNote = 'No hay vehículos con cobertura registrada para ese distrito en la fecha seleccionada. Puedes reservar y el equipo confirmará disponibilidad.';
-            } else {
-                $slots = array_map(function (array $slot) use ($coverageService, $companyId, $date, $district, $availableVehicles) {
-                    if (!$slot['available']) {
-                        return $slot;
-                    }
-                    $covers = $availableVehicles->contains(function (Vehicle $vehicle) use ($coverageService, $date, $slot, $district) {
-                        $result = $coverageService->vehicleCoversAppointment(
-                            $vehicle,
-                            new Client(['distrito' => $district]),
-                            $date,
-                            $slot['time'],
-                            $district
-                        );
-                        return $result['covers'];
-                    });
-                    if (!$covers) {
-                        $slot['available'] = false;
-                        $slot['reason'] = 'sin_cobertura';
-                    }
-                    return $slot;
-                }, $slots);
-            }
-        }
+        /** @var AvailabilityService $availabilityService */
+        $availabilityService = app(AvailabilityService::class);
+        $result = $availabilityService->getSlots(
+            $companyId,
+            $date,
+            $duration,
+            $district ? (string) $district : null
+        );
 
         return response()->json([
             'success' => true,
             'data' => [
-                'date' => $date->toDateString(),
-                'slots' => $slots,
-                'coverage_note' => $coverageNote,
+                'date' => $result['date'],
+                'slots' => $result['slots'],
+                'coverage_note' => $result['coverage_note'],
+                'day_open' => $result['day_open'],
+                'working_window' => $result['working_window'],
+                'closed_reason' => $result['closed_reason'] ?? null,
             ],
         ]);
     }
@@ -202,6 +182,17 @@ class PublicBookingController extends Controller
 
         $payload = $validator->validated();
         $companyId = $this->publicCompanyId();
+
+        /** @var PortalBookingService $portalService */
+        $portalService = app(PortalBookingService::class);
+        $portalSettings = $portalService->getSettings($companyId);
+        if (empty($portalSettings['guest_booking_enabled'])) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Las reservas sin cuenta están deshabilitadas. Inicia sesión en el portal de clientes.',
+            ], 403);
+        }
+
         $clientInput = $payload['client'];
         $petInput = $payload['pet'];
         $aptInput = $payload['appointment'];
@@ -260,6 +251,7 @@ class PublicBookingController extends Controller
             $price = (float) $aptInput['price'];
             $appointment = Appointment::create([
                 'tracking_code' => $this->generateTrackingCode(),
+                'booking_source' => PortalBookingService::SOURCE_PUBLIC_GUEST,
                 'client_id' => $client->id,
                 'pet_id' => $pet->id,
                 'company_id' => $companyId,
@@ -285,6 +277,9 @@ class PublicBookingController extends Controller
             ]);
 
             DB::commit();
+
+            $appointment->load(['client', 'pet']);
+            $portalService->notifyStaffPortalBooking($appointment, 'pending_approval');
 
             return response()->json([
                 'success' => true,
@@ -401,73 +396,6 @@ class PublicBookingController extends Controller
             'Cancelada' => 'cancelled',
             default => 'confirmed',
         };
-    }
-
-    /**
-     * @return list<array{time: string, available: bool, reason?: string}>
-     */
-    private function buildTimeSlots(int $companyId, Carbon $date, int $duration): array
-    {
-        $dayOfWeek = strtolower($date->format('l'));
-        $start = '08:00';
-        $end = '18:00';
-        $isOpen = true;
-
-        $config = CompanyConfiguration::where('company_id', $companyId)
-            ->where('config_type', 'document_settings')
-            ->first();
-
-        if ($config && isset($config->config_data['working_hours'][$dayOfWeek])) {
-            $hours = $config->config_data['working_hours'][$dayOfWeek];
-            $isOpen = (bool) ($hours['open'] ?? true);
-            $start = $hours['start'] ?? $start;
-            $end = $hours['end'] ?? $end;
-        }
-
-        if (!$isOpen) {
-            return [];
-        }
-
-        $slotStarts = [];
-        $cursor = Carbon::createFromFormat('H:i', substr($start, 0, 5));
-        $endTime = Carbon::createFromFormat('H:i', substr($end, 0, 5));
-
-        while ($cursor->lte($endTime)) {
-            $slotStarts[] = $cursor->format('H:i');
-            $cursor->addMinutes($duration);
-        }
-
-        $busy = Appointment::query()
-            ->where('company_id', $companyId)
-            ->whereDate('date', $date->toDateString())
-            ->whereNotIn('status', ['Cancelada'])
-            ->get(['time', 'duration']);
-
-        return array_map(function (string $time) use ($busy, $duration) {
-            $available = !$this->slotOverlapsBusy($time, $duration, $busy);
-            return [
-                'time' => $time,
-                'available' => $available,
-                ...(!$available ? ['reason' => 'ocupado'] : []),
-            ];
-        }, $slotStarts);
-    }
-
-    private function slotOverlapsBusy(string $slotTime, int $duration, $busyAppointments): bool
-    {
-        $slotStart = Carbon::createFromFormat('H:i', substr($slotTime, 0, 5));
-        $slotEnd = $slotStart->copy()->addMinutes($duration);
-
-        foreach ($busyAppointments as $apt) {
-            $aptStart = Carbon::createFromFormat('H:i', substr((string) $apt->time, 0, 5));
-            $aptEnd = $aptStart->copy()->addMinutes((int) ($apt->duration ?? 60));
-
-            if ($slotStart->lt($aptEnd) && $aptStart->lt($slotEnd)) {
-                return true;
-            }
-        }
-
-        return false;
     }
 
     private function defaultServiceCatalog(): array

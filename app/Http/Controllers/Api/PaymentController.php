@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Appointment;
 use App\Models\Invoice;
 use App\Models\Payment;
+use App\Services\AppointmentPaymentStatusService;
 use App\Services\Payment\MercadoPagoService;
 use App\Services\Payment\NiubizService;
 use Illuminate\Http\JsonResponse;
@@ -102,6 +103,12 @@ class PaymentController extends Controller
             'paid_at' => now(),
             'notes' => $validated['notes'] ?? null,
         ]);
+
+        if ($appointmentId) {
+            app(AppointmentPaymentStatusService::class)->sync(
+                Appointment::findOrFail($appointmentId)
+            );
+        }
 
         return response()->json([
             'success' => true,

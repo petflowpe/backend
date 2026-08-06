@@ -7,7 +7,9 @@ use App\Http\Controllers\Controller;
 use App\Models\Appointment;
 use App\Models\CashMovement;
 use App\Models\CashSession;
+use App\Models\Payment;
 use App\Models\Vehicle;
+use App\Services\AppointmentPaymentStatusService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -85,7 +87,15 @@ class CashSessionController extends Controller
             ->get([
                 'id', 'client_id', 'vehicle_id', 'service_name', 'status', 'payment_status',
                 'payment_method', 'total', 'time', 'district', 'boleta_id', 'invoice_id',
+                'advance_amount', 'advance_paid_at',
             ]);
+
+        $paidByAppointment = Payment::query()
+            ->whereIn('appointment_id', $appointments->pluck('id')->filter())
+            ->where('status', 'completed')
+            ->selectRaw('appointment_id, SUM(amount) as paid_amount')
+            ->groupBy('appointment_id')
+            ->pluck('paid_amount', 'appointment_id');
 
         $methodTotals = [
             'efectivo' => 0.0,
@@ -97,16 +107,29 @@ class CashSessionController extends Controller
 
         $pending = [];
         $pendingInvoicing = [];
+        $issuedToday = [];
         foreach ($appointments as $apt) {
             $clientName = $apt->client?->razon_social
                 ?? $apt->client?->nombre_comercial
                 ?? null;
             $invoiced = !empty($apt->boleta_id) || !empty($apt->invoice_id);
+
+            $paidAmount = (float) ($paidByAppointment[$apt->id] ?? 0);
+            if ($paidAmount <= AppointmentPaymentStatusService::EPSILON
+                && $apt->advance_paid_at
+                && (float) ($apt->advance_amount ?? 0) > 0
+            ) {
+                $paidAmount = (float) $apt->advance_amount;
+            }
+            $remaining = round(max(0, (float) $apt->total - $paidAmount), 2);
+
             $aptRow = [
                 'id' => $apt->id,
                 'service_name' => $apt->service_name,
                 'client_name' => $clientName,
                 'total' => (float) $apt->total,
+                'paid_amount' => round($paidAmount, 2),
+                'remaining_amount' => $remaining,
                 'time' => $apt->time,
                 'district' => $apt->district,
                 'vehicle_id' => $apt->vehicle_id,
@@ -117,6 +140,10 @@ class CashSessionController extends Controller
                 'invoice_id' => $apt->invoice_id,
             ];
 
+            if ($invoiced && $apt->status === 'Completada') {
+                $issuedToday[] = $aptRow;
+            }
+
             if ($apt->payment_status === 'Pagado') {
                 $bucket = $this->paymentMethodBucket($apt->payment_method);
                 $methodTotals[$bucket] += (float) $apt->total;
@@ -124,6 +151,11 @@ class CashSessionController extends Controller
                     $pendingInvoicing[] = $aptRow;
                 }
             } elseif (in_array($apt->status, ['Completada', 'En Proceso'], true)) {
+                // Pendiente o Parcial: pendiente de cobro (saldo)
+                if ($paidAmount > AppointmentPaymentStatusService::EPSILON) {
+                    $bucket = $this->paymentMethodBucket($apt->payment_method);
+                    $methodTotals[$bucket] += $paidAmount;
+                }
                 $pending[] = $aptRow;
                 if ($apt->status === 'Completada' && !$invoiced) {
                     $pendingInvoicing[] = $aptRow;
@@ -135,6 +167,7 @@ class CashSessionController extends Controller
             ->unique('id')
             ->values()
             ->all();
+        $issuedToday = collect($issuedToday)->unique('id')->values()->all();
 
         $movementsQuery = CashMovement::query()
             ->where('company_id', $companyId)
@@ -190,6 +223,7 @@ class CashSessionController extends Controller
                 ],
                 'pending_collections' => $pending,
                 'pending_invoicing' => $pendingInvoicing,
+                'issued_today' => $issuedToday,
                 'expenses_total' => $expensesTotal,
                 'movements' => $movements,
                 'by_vehicle' => $byVehicle,

@@ -262,8 +262,8 @@ class ProductController extends Controller
             
             $productStock = $this->productService->adjustStock(
                 $product,
-                $data['area_id'],
-                $data['quantity'],
+                isset($data['area_id']) ? (int) $data['area_id'] : null,
+                (float) $data['quantity'],
                 $data['type'],
                 $data['notes'] ?? null
             );
@@ -273,6 +273,11 @@ class ProductController extends Controller
                 'message' => 'Stock ajustado exitosamente',
                 'data' => $productStock->load('area'),
             ]);
+        } catch (\InvalidArgumentException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], 422);
         } catch (Exception $e) {
             Log::error('Error al ajustar stock', [
                 'product_id' => $product->id,

@@ -8,9 +8,10 @@ use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
+use App\Models\Concerns\BelongsToCompany;
 class Client extends Model
 {
-    use HasFactory;
+    use HasFactory, BelongsToCompany;
 
     protected $fillable = [
         'company_id',
@@ -38,12 +39,17 @@ class Client extends Model
         'fecha_ultima_visita',
         'fecha_registro',
         'activo',
+        'portal_booking_enabled',
+        'portal_approval_status',
+        'portal_registered_at',
         'critical_note',
         'critical_pet_note',
     ];
 
     protected $casts = [
         'activo' => 'boolean',
+        'portal_booking_enabled' => 'boolean',
+        'portal_registered_at' => 'datetime',
         'fecha_nacimiento' => 'date',
         'fecha_ultima_visita' => 'date',
         'fecha_registro' => 'date',
@@ -111,7 +117,7 @@ class Client extends Model
     {
         return match ($this->tipo_documento) {
             '1' => 'DNI',
-            '4' => 'Carnet de Extranjería',
+            '4' => 'Carnet de ExtranjerÃ­a',
             '6' => 'RUC',
             '0' => 'DOC.TRIB.NO.DOM.SIN.RUC',
             default => 'Desconocido'

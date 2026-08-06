@@ -2,15 +2,20 @@
 
 use App\Models\Client;
 use App\Models\Company;
+use App\Models\Role;
 use App\Models\User;
 use Illuminate\Support\Facades\Hash;
 
 beforeEach(function () {
     Company::factory()->create(['activo' => true]);
+    $role = Role::firstOrCreate(
+        ['name' => 'super_admin'],
+        ['display_name' => 'Super Admin', 'permissions' => ['*'], 'is_system' => true, 'active' => true]
+    );
     $this->user = User::factory()->create([
         'email' => 'pets@test.com',
         'password' => Hash::make('password'),
-        'role_id' => null,
+        'role_id' => $role->id,
         'company_id' => null,
         'active' => true,
     ]);

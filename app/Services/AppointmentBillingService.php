@@ -11,8 +11,10 @@ use Exception;
 
 class AppointmentBillingService
 {
-    public function __construct(private DocumentService $documentService)
-    {
+    public function __construct(
+        private DocumentService $documentService,
+        private AppointmentPaymentStatusService $paymentStatusService,
+    ) {
     }
 
     public function preview(Appointment $appointment): array
@@ -69,10 +71,11 @@ class AppointmentBillingService
                 $invoice->refresh();
             }
 
+            // Emitir CPE no implica cobro: no forzar Pagado (crédito / parcial permitido).
             $appointment->update([
                 'invoice_id' => $invoice->id,
-                'payment_status' => 'Pagado',
             ]);
+            $this->paymentStatusService->sync($appointment->fresh());
 
             return [
                 'tipo_documento' => '01',
@@ -91,8 +94,8 @@ class AppointmentBillingService
 
         $appointment->update([
             'boleta_id' => $boleta->id,
-            'payment_status' => 'Pagado',
         ]);
+        $this->paymentStatusService->sync($appointment->fresh());
 
         return [
             'tipo_documento' => '03',
@@ -143,8 +146,12 @@ class AppointmentBillingService
         $petLabel = $appointment->pet?->name ? " — Mascota: {$appointment->pet->name}" : '';
         $detalles = $this->buildDetalles($appointment, $petLabel);
 
-        $paymentMethod = $appointment->payment_method ?? 'Efectivo';
-        $formaPago = str_contains(strtolower($paymentMethod), 'credito') ? 'Credito' : 'Contado';
+        // Contado solo si el cobro está al 100%; si no, crédito (facturar sin cobrar / parcial).
+        $cobroStatus = $this->paymentStatusService->resolveStatus($appointment);
+        $paymentMethod = strtolower((string) ($appointment->payment_method ?? ''));
+        $formaPago = ($cobroStatus === 'Pagado' && !str_contains($paymentMethod, 'credito'))
+            ? 'Contado'
+            : 'Credito';
 
         return [
             'company_id' => $appointment->company_id,

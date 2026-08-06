@@ -2,14 +2,14 @@
 
 namespace App\Http\Requests\Company;
 
+use App\Models\Company;
 use Illuminate\Foundation\Http\FormRequest;
 
 class StoreCompanyRequest extends FormRequest
 {
     public function authorize(): bool
     {
-        // Si quieres, puedes poner lógica para autorizar según el usuario.
-        return true;
+        return $this->user()?->can('create', Company::class) ?? false;
     }
 
     public function rules(): array
@@ -26,8 +26,8 @@ class StoreCompanyRequest extends FormRequest
             'telefono' => 'nullable|string|max:20',
             'email' => 'required|email|max:255',
             'web' => 'nullable|url|max:255',
-            'usuario_sol' => 'required|string|max:50',
-            'clave_sol' => 'required|string|max:100',
+            'usuario_sol' => 'nullable|string|max:50',
+            'clave_sol' => 'nullable|string|max:100',
             'certificado_pem' => 'nullable|file|mimes:pem,crt,cer,txt|max:2048',
             'certificado_password' => 'nullable|string|max:100',
             'endpoint_beta' => 'nullable|url|max:255',

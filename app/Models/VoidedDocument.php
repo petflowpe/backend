@@ -6,9 +6,10 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
+use App\Models\Concerns\BelongsToCompany;
 class VoidedDocument extends Model
 {
-    use HasFactory;
+    use HasFactory, BelongsToCompany;
 
     protected $fillable = [
         'company_id',
@@ -49,7 +50,7 @@ class VoidedDocument extends Model
 
     public function getTipoDocumentoNameAttribute(): string
     {
-        return 'Comunicación de Baja';
+        return 'ComunicaciÃ³n de Baja';
     }
 
     public function getEstadoSunatColorAttribute(): string

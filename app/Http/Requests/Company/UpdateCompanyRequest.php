@@ -9,7 +9,9 @@ class UpdateCompanyRequest extends FormRequest
 {
     public function authorize(): bool
     {
-        return true; // ajusta si necesitas lógica de autorización
+        $company = $this->route('company');
+
+        return $company && $this->user()?->can('update', $company);
     }
 
     public function rules(): array

@@ -2,11 +2,93 @@
 
 use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
-use Illuminate\Support\Facades\Hash;
 
 Artisan::command('inspire', function () {
     $this->comment(Inspiring::quote());
 })->purpose('Display an inspiring quote');
+
+Artisan::command('users:ensure-admin
+    {--email=admin@smartpet.com : Email principal de acceso}
+    {--password= : Contraseña en texto plano (OBLIGATORIA; el cast hashed cifra una sola vez)}
+    {--name=Super Administrador : Nombre visible}
+    {--also-email= : Email adicional a sincronizar con la misma clave}
+    {--only-if-missing : Solo crea si el email no existe; no resetea claves existentes}
+', function () {
+    $email = strtolower(trim((string) $this->option('email')));
+    $password = (string) $this->option('password');
+    $name = (string) $this->option('name');
+    $alsoEmail = strtolower(trim((string) ($this->option('also-email') ?: '')));
+    $onlyIfMissing = (bool) $this->option('only-if-missing');
+
+    if ($email === '') {
+        $this->error('email es obligatorio.');
+        return 1;
+    }
+    if ($password === '') {
+        $this->error('password es obligatorio (pásalo por --password o secret de CI).');
+        return 1;
+    }
+
+    // Asegurar roles/permisos base sin crear usuarios demo del seeder.
+    $rolesSeeder = new \Database\Seeders\RolesAndPermissionsSeeder();
+    $rolesSeeder->runPermissionsAndRolesOnly();
+
+    $superAdminRole = \App\Models\Role::where('name', 'super_admin')->first();
+    if (!$superAdminRole) {
+        $this->error('No existe rol super_admin.');
+        return 1;
+    }
+
+    $companyId = \App\Models\Company::query()->value('id');
+
+    $cmd = $this;
+    $upsert = function (string $userEmail) use ($name, $password, $superAdminRole, $companyId, $onlyIfMissing, $cmd) {
+        $existing = \App\Models\User::where('email', $userEmail)->first();
+        if ($onlyIfMissing && $existing) {
+            $cmd->line("Skip (ya existe): {$userEmail} (id={$existing->id})");
+            return $existing;
+        }
+
+        /** @var \App\Models\User $user */
+        $user = \App\Models\User::updateOrCreate(
+            ['email' => $userEmail],
+            [
+                'name' => $name,
+                // NO usar Hash::make aquí: el cast "hashed" del modelo ya cifra.
+                'password' => $password,
+                'role_id' => $superAdminRole->id,
+                'company_id' => $companyId,
+                'user_type' => 'system',
+                'active' => true,
+                'email_verified_at' => now(),
+                'failed_login_attempts' => 0,
+                'locked_until' => null,
+                'force_password_change' => false,
+                'password_changed_at' => now(),
+            ]
+        );
+
+        // Por si el updateOrCreate no tocó password al no detectar cambio:
+        $user->password = $password;
+        $user->active = true;
+        $user->failed_login_attempts = 0;
+        $user->locked_until = null;
+        $user->save();
+
+        return $user;
+    };
+
+    $primary = $upsert($email);
+    $this->info("OK primary: {$primary->email} (id={$primary->id})");
+
+    if ($alsoEmail !== '' && $alsoEmail !== $email) {
+        $secondary = $upsert($alsoEmail);
+        $this->info("OK also-email: {$secondary->email} (id={$secondary->id})");
+    }
+
+    $this->line("Login: {$email} / {$password}");
+    return 0;
+})->purpose('Crear/actualizar admin de acceso (corrige doble hash)');
 
 Artisan::command('pilot:setup
     {--fresh : Ejecuta migrate:fresh antes del setup}
@@ -103,11 +185,12 @@ Artisan::command('pilot:setup
         return 1;
     }
 
+    // NO usar Hash::make: el cast "hashed" del modelo User ya cifra la contraseña.
     $admin = \App\Models\User::updateOrCreate(
         ['email' => $adminEmail],
         [
             'name' => 'Admin Piloto',
-            'password' => Hash::make($adminPassword),
+            'password' => $adminPassword,
             'role_id' => $companyAdminRole->id,
             'company_id' => $company->id,
             'user_type' => 'user',

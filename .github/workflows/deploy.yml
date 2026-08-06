@@ -74,13 +74,16 @@ jobs:
       - name: Post-deploy en VPS
         env:
           RUN_SEEDERS: ${{ secrets.RUN_SEEDERS_ON_DEPLOY }}
+          ENSURE_ADMIN_PASSWORD: ${{ secrets.ENSURE_ADMIN_PASSWORD }}
+          ENSURE_ADMIN_EMAIL: ${{ secrets.ENSURE_ADMIN_EMAIL }}
+          ENSURE_ADMIN_ALSO_EMAIL: ${{ secrets.ENSURE_ADMIN_ALSO_EMAIL }}
         run: |
           ssh -i ~/.ssh/deploy_key \
             -o BatchMode=yes \
             -o ConnectTimeout=30 \
             -o StrictHostKeyChecking=no \
             "$SSH_USER@$SSH_HOST" \
-            "DEPLOY_PATH='$DEPLOY_PATH' RUN_SEEDERS='${RUN_SEEDERS:-false}' bash -s" << 'REMOTE_SCRIPT'
+            "DEPLOY_PATH='$DEPLOY_PATH' RUN_SEEDERS='${RUN_SEEDERS:-false}' ENSURE_ADMIN_PASSWORD='${ENSURE_ADMIN_PASSWORD:-}' ENSURE_ADMIN_EMAIL='${ENSURE_ADMIN_EMAIL:-}' ENSURE_ADMIN_ALSO_EMAIL='${ENSURE_ADMIN_ALSO_EMAIL:-}' bash -s" << 'REMOTE_SCRIPT'
           set -euo pipefail
 
           cd "$DEPLOY_PATH"
@@ -89,6 +92,55 @@ jobs:
           if [ ! -f .env ]; then
             echo "ERROR: falta .env en $DEPLOY_PATH (debe existir en el servidor; no se sube por rsync)"
             exit 1
+          fi
+
+          env_val() {
+            local key="$1"
+            grep -E "^${key}=" .env | tail -n 1 | cut -d= -f2- | tr -d '\r' | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//"
+          }
+
+          APP_ENV_VAL="$(env_val APP_ENV)"
+          APP_DEBUG_VAL="$(env_val APP_DEBUG)"
+          ALLOW_INSECURE_VAL="$(env_val ALLOW_INSECURE_ENV)"
+          MAIL_MAILER_VAL="$(env_val MAIL_MAILER)"
+          FRONTEND_URL_VAL="$(env_val FRONTEND_URL)"
+
+          insecure=0
+          if [ "$APP_DEBUG_VAL" = "true" ] || [ "$APP_DEBUG_VAL" = "1" ]; then
+            insecure=1
+            echo "ERROR: APP_DEBUG=${APP_DEBUG_VAL:-<vacío>} — en producción debe ser false"
+          fi
+          if [ "$APP_ENV_VAL" != "production" ]; then
+            insecure=1
+            echo "ERROR: APP_ENV=${APP_ENV_VAL:-<vacío>} — en producción debe ser production"
+          fi
+
+          if [ "$insecure" = "1" ]; then
+            if [ "$ALLOW_INSECURE_VAL" = "true" ] || [ "$ALLOW_INSECURE_VAL" = "1" ]; then
+              echo "::warning::Entorno inseguro, pero ALLOW_INSECURE_ENV=true — el deploy continúa (solo temporal)."
+            else
+              echo "::error::Hardening: corrige el .env en el VPS y vuelve a desplegar."
+              echo "  APP_ENV=production"
+              echo "  APP_DEBUG=false"
+              echo "Temporal (no recomendado): ALLOW_INSECURE_ENV=true"
+              exit 1
+            fi
+          else
+            echo "OK hardening: APP_ENV=production y APP_DEBUG=false"
+          fi
+
+          if [ -z "$MAIL_MAILER_VAL" ] || [ "$MAIL_MAILER_VAL" = "log" ] || [ "$MAIL_MAILER_VAL" = "array" ]; then
+            echo "::warning::MAIL_MAILER=${MAIL_MAILER_VAL:-log} — los emails (forgot password) NO salen. Configure SMTP en .env del VPS."
+            echo "  Ejemplo Hostinger: MAIL_MAILER=smtp MAIL_SCHEME=smtps MAIL_HOST=smtp.hostinger.com MAIL_PORT=465"
+            echo "  Luego: php artisan mail:test correo@ejemplo.com && php artisan config:cache"
+          else
+            echo "OK mailer: MAIL_MAILER=$MAIL_MAILER_VAL"
+          fi
+
+          if [ -z "$FRONTEND_URL_VAL" ]; then
+            echo "::warning::FRONTEND_URL vacío — los links de reset usarán APP_URL (puede ser el API)."
+          else
+            echo "OK FRONTEND_URL definido"
           fi
 
           echo "Instalando dependencias PHP..."
@@ -104,36 +156,47 @@ jobs:
             echo "Seeders omitidos."
           fi
 
-          echo "Limpiando cache..."
-          php artisan config:clear
-          php artisan route:clear
-          php artisan view:clear
-          php artisan cache:clear
-
-          echo "Generando cache de produccion (sin route:cache por rutas con closures)..."
-          php artisan config:cache
-          php artisan view:cache
-          php artisan event:cache 2>/dev/null || true
+          if [ -n "${ENSURE_ADMIN_PASSWORD:-}" ]; then
+            ADMIN_EMAIL="${ENSURE_ADMIN_EMAIL:-admin@smartpet.com}"
+            ALSO_ARGS=()
+            if [ -n "${ENSURE_ADMIN_ALSO_EMAIL:-}" ]; then
+              ALSO_ARGS+=(--also-email="$ENSURE_ADMIN_ALSO_EMAIL")
+            fi
+            echo "Asegurando usuario admin (password desde secret ENSURE_ADMIN_PASSWORD)..."
+            php artisan users:ensure-admin \
+              --email="$ADMIN_EMAIL" \
+              --password="$ENSURE_ADMIN_PASSWORD" \
+              "${ALSO_ARGS[@]}"
+          else
+            echo "ENSURE_ADMIN_PASSWORD no configurado: no se crea/resetea admin en este deploy (seguro)."
+          fi
 
           echo "Ajustando permisos de storage..."
           mkdir -p storage/framework/cache storage/framework/sessions storage/framework/views storage/logs bootstrap/cache
           chmod -R ug+rwx storage bootstrap/cache 2>/dev/null || true
           sudo chown -R "$USER":www-data storage bootstrap/cache 2>/dev/null || true
 
+          echo "Limpiando cache..."
+          php artisan config:clear
+          php artisan route:clear
+          php artisan cache:clear
+          php artisan view:clear 2>/dev/null || true
+
+          echo "Generando cache de produccion (sin route:cache por rutas con closures)..."
+          php artisan config:cache
+          if [ -d resources/views ]; then
+            php artisan view:cache 2>/dev/null || true
+          fi
+          php artisan event:cache 2>/dev/null || true
+
           echo "Deploy backend completado"
           REMOTE_SCRIPT
 
   deploy-frontend:
     runs-on: ubuntu-latest
-    needs: deploy-backend
-    if: |
-      always() && (
-        github.event_name == 'repository_dispatch' ||
-        (
-          (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
-          needs.deploy-backend.result == 'success'
-        )
-      )
+    # Solo cuando el repo frontend dispara repository_dispatch (petflowpe/frontend).
+    # Un push al backend NO debe compilar ni publicar el frontend.
+    if: github.event_name == 'repository_dispatch'
     env:
       SSH_HOST: ${{ secrets.SSH_HOST }}
       SSH_USER: ${{ secrets.SSH_USER }}
@@ -155,12 +218,22 @@ jobs:
           echo "DEPLOY_PATH=$FRONTEND_PATH" >> "$GITHUB_ENV"
           echo "DEPLOY_FRONTEND=1" >> "$GITHUB_ENV"
 
+      - name: Resolver ref del frontend
+        if: env.DEPLOY_FRONTEND == '1'
+        run: |
+          REF="${{ github.event.client_payload.ref }}"
+          if [ -z "$REF" ]; then
+            REF="${{ github.ref_name }}"
+          fi
+          echo "FRONTEND_REF=$REF" >> "$GITHUB_ENV"
+          echo "Desplegando frontend ref: $REF"
+
       - name: Checkout frontend
         if: env.DEPLOY_FRONTEND == '1'
         uses: actions/checkout@v4
         with:
           repository: petflowpe/frontend
-          ref: ${{ github.ref_name }}
+          ref: ${{ env.FRONTEND_REF }}
 
       - name: Configurar Node
         if: env.DEPLOY_FRONTEND == '1'
@@ -175,7 +248,7 @@ jobs:
           VITE_API_URL: ${{ secrets.VITE_API_URL }}
           VITE_SENTRY_DSN: ${{ secrets.VITE_SENTRY_DSN }}
         run: |
-          export VITE_API_URL="${VITE_API_URL:-https://api.petflow.com/api}"
+          export VITE_API_URL="${VITE_API_URL:-https://srv1197160.hstgr.cloud/api}"
           npm ci
           npm run build
 

@@ -5,8 +5,8 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\PurchaseOrder;
 use App\Models\PurchaseOrderItem;
-use App\Models\StockMovement;
 use App\Models\Product;
+use App\Services\ProductService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -15,13 +15,18 @@ use Exception;
 
 class PurchaseOrderController extends Controller
 {
+    public function __construct(
+        private ProductService $productService
+    ) {}
     /**
      * Listar órdenes de compra
      */
     public function index(Request $request): JsonResponse
     {
         try {
-            $companyId = $request->integer('company_id', 1);
+            $companyId = $request->attributes->get('scope_company_id')
+                ?? $request->integer('company_id')
+                ?: ($request->user()?->company_id);
             $query = PurchaseOrder::with(['supplier:id,name,company_id', 'items.product:id,name,code,stock'])
                 ->byCompany($companyId)
                 ->orderByDesc('order_date')
@@ -258,24 +263,22 @@ class PurchaseOrderController extends Controller
                 }
                 $qty = (float) $item->quantity;
                 $unitCost = (float) $item->unit_cost;
-                $totalCost = $qty * $unitCost;
 
-                StockMovement::create([
-                    'company_id' => $purchase_order->company_id,
-                    'branch_id' => null,
-                    'product_id' => $product->id,
-                    'movement_date' => now(),
-                    'type' => 'IN',
-                    'quantity' => $qty,
-                    'unit_cost' => $unitCost,
-                    'total_cost' => $totalCost,
-                    'source_type' => 'purchase',
-                    'source_id' => $purchase_order->id,
-                    'notes' => 'Entrada por orden de compra #' . $purchase_order->id,
-                    'created_by' => $userId,
-                ]);
+                $this->productService->adjustStock(
+                    $product,
+                    null,
+                    $qty,
+                    'IN',
+                    'Entrada por orden de compra #' . $purchase_order->id,
+                    [
+                        'wrap_transaction' => false,
+                        'source_type' => 'purchase',
+                        'source_id' => $purchase_order->id,
+                        'unit_cost' => $unitCost,
+                        'created_by' => $userId,
+                    ]
+                );
 
-                $product->increment('stock', $qty);
                 $product->update(['cost_price' => $unitCost]);
             }
 
