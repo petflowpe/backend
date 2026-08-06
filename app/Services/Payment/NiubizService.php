@@ -151,13 +151,10 @@ class NiubizService
             'metadata' => array_merge($payment->metadata ?? [], ['niubiz_webhook' => $payload]),
         ]);
 
-        if ($status === 'completed' && $payment->appointment_id) {
-            $payment->appointment?->update([
-                'payment_status' => 'Pagado',
-                'payment_method' => 'Tarjeta',
-            ]);
+        if ($status === 'completed') {
+            app(\App\Services\PaymentLedgerSyncService::class)->onPaymentCompleted($payment->fresh());
         }
 
-        return $payment;
+        return $payment->fresh();
     }
 }
