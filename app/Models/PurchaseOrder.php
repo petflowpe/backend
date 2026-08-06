@@ -6,8 +6,10 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 
 use App\Models\Concerns\BelongsToCompany;
+
 class PurchaseOrder extends Model
 {
     use HasFactory, BelongsToCompany;
@@ -15,11 +17,20 @@ class PurchaseOrder extends Model
     protected $fillable = [
         'company_id',
         'supplier_id',
+        'default_area_id',
         'order_number',
         'order_date',
         'delivery_date',
         'status',
+        'approval_status',
+        'approved_by',
+        'approved_at',
+        'approval_notes',
         'total',
+        'subtotal',
+        'igv_rate',
+        'igv_amount',
+        'prices_include_igv',
         'invoice_number',
         'invoice_date',
         'invoice_total',
@@ -30,6 +41,9 @@ class PurchaseOrder extends Model
         'amount_paid',
         'paid_at',
         'notes',
+        'cancelled_at',
+        'cancellation_reason',
+        'email_sent_at',
         'created_by',
     ];
 
@@ -38,10 +52,17 @@ class PurchaseOrder extends Model
         'delivery_date' => 'date',
         'invoice_date' => 'date',
         'paid_at' => 'datetime',
+        'approved_at' => 'datetime',
+        'cancelled_at' => 'datetime',
+        'email_sent_at' => 'datetime',
         'total' => 'decimal:2',
+        'subtotal' => 'decimal:2',
+        'igv_rate' => 'decimal:2',
+        'igv_amount' => 'decimal:2',
         'invoice_total' => 'decimal:2',
         'amount_paid' => 'decimal:2',
         'kardex_registered' => 'boolean',
+        'prices_include_igv' => 'boolean',
     ];
 
     public function company(): BelongsTo
@@ -62,6 +83,21 @@ class PurchaseOrder extends Model
     public function creator(): BelongsTo
     {
         return $this->belongsTo(User::class, 'created_by');
+    }
+
+    public function approver(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'approved_by');
+    }
+
+    public function payable(): HasOne
+    {
+        return $this->hasOne(PurchasePayable::class);
+    }
+
+    public function defaultArea(): BelongsTo
+    {
+        return $this->belongsTo(Area::class, 'default_area_id');
     }
 
     public function scopeByCompany($query, int $companyId)
