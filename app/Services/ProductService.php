@@ -85,14 +85,40 @@ class ProductService
         }
     }
 
-    public function adjustStock(Product $product, int $areaId, float $quantity, string $type, ?string $notes = null): ProductStock
-    {
-        DB::beginTransaction();
-        try {
+    /**
+     * Ajuste unificado de stock (product_stocks + products.stock + kardex).
+     * Tipos: IN | OUT | ADJUST. areaId null = primera fila de stock o primera área de la empresa.
+     *
+     * @param  array{source_type?: string, source_id?: int|null, branch_id?: int|null, unit_cost?: float|null, created_by?: int|null, wrap_transaction?: bool}  $options
+     */
+    public function adjustStock(
+        Product $product,
+        ?int $areaId,
+        float $quantity,
+        string $type,
+        ?string $notes = null,
+        array $options = []
+    ): ProductStock {
+        $type = strtoupper($type);
+        if (! in_array($type, ['IN', 'OUT', 'ADJUST'], true)) {
+            $type = match (strtolower((string) ($options['legacy_type'] ?? $type))) {
+                'salida', 'out', 'sale' => 'OUT',
+                'entrada', 'in', 'purchase' => 'IN',
+                default => 'ADJUST',
+            };
+        }
+
+        $wrap = $options['wrap_transaction'] ?? true;
+        $runner = function () use ($product, $areaId, $quantity, $type, $notes, $options) {
+            $resolvedAreaId = $areaId ?: $this->resolveDefaultAreaId($product);
+            if (! $resolvedAreaId) {
+                throw new \InvalidArgumentException('No hay área de almacén para ajustar stock. Cree un área en el catálogo.');
+            }
+
             $productStock = ProductStock::firstOrCreate(
                 [
                     'product_id' => $product->id,
-                    'area_id' => $areaId,
+                    'area_id' => $resolvedAreaId,
                 ],
                 [
                     'quantity' => 0,
@@ -101,47 +127,87 @@ class ProductService
                 ]
             );
 
-            $oldQuantity = $productStock->quantity;
+            $oldQuantity = (float) $productStock->quantity;
 
             if ($type === 'IN') {
-                $productStock->quantity += $quantity;
+                $productStock->quantity = $oldQuantity + $quantity;
             } elseif ($type === 'OUT') {
-                $productStock->quantity = max(0, $productStock->quantity - $quantity);
-            } else { // ADJUST
+                if ($oldQuantity < $quantity) {
+                    throw new \InvalidArgumentException(
+                        "Stock insuficiente de {$product->name}: disponible {$oldQuantity}, solicitado {$quantity}"
+                    );
+                }
+                $productStock->quantity = $oldQuantity - $quantity;
+            } else {
                 $productStock->quantity = $quantity;
             }
 
             $productStock->save();
 
-            // Actualizar stock total del producto
             $totalStock = ProductStock::where('product_id', $product->id)->sum('quantity');
             $product->update(['stock' => $totalStock]);
 
-            // Registrar movimiento
+            $unitCost = isset($options['unit_cost'])
+                ? (float) $options['unit_cost']
+                : (float) ($product->cost_price ?? 0);
+
             StockMovement::create([
                 'company_id' => $product->company_id,
+                'branch_id' => $options['branch_id'] ?? null,
                 'product_id' => $product->id,
                 'movement_date' => now(),
                 'type' => $type,
                 'quantity' => abs($quantity),
-                'unit_cost' => $product->cost_price ?? 0,
-                'total_cost' => ($product->cost_price ?? 0) * abs($quantity),
-                'source_type' => 'adjustment',
+                'unit_cost' => $unitCost,
+                'total_cost' => $unitCost * abs($quantity),
+                'source_type' => $options['source_type'] ?? 'adjustment',
+                'source_id' => $options['source_id'] ?? null,
                 'notes' => $notes ?? "Ajuste de stock: {$oldQuantity} -> {$productStock->quantity}",
-                'created_by' => auth()->id(),
+                'created_by' => $options['created_by'] ?? auth()->id(),
             ]);
 
-            DB::commit();
             return $productStock->fresh();
+        };
+
+        if (! $wrap) {
+            return $runner();
+        }
+
+        DB::beginTransaction();
+        try {
+            $result = $runner();
+            DB::commit();
+
+            return $result;
         } catch (\Exception $e) {
             DB::rollBack();
             Log::error('Error al ajustar stock', [
                 'product_id' => $product->id,
                 'area_id' => $areaId,
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ]);
             throw $e;
         }
+    }
+
+    public function resolveDefaultAreaId(Product $product): ?int
+    {
+        $fromStock = ProductStock::where('product_id', $product->id)->value('area_id');
+        if ($fromStock) {
+            return (int) $fromStock;
+        }
+
+        if ($product->area_id) {
+            return (int) $product->area_id;
+        }
+
+        $areaId = \App\Models\Area::query()
+            ->where('company_id', $product->company_id)
+            ->where('active', true)
+            ->orderBy('id')
+            ->value('id');
+
+        return $areaId ? (int) $areaId : null;
     }
 
     public function getKPIs(int $companyId): array

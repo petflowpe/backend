@@ -13,7 +13,6 @@ use App\Models\Client;
 use App\Models\CashMovement;
 use App\Models\CashSession;
 use App\Models\Payment;
-use App\Models\StockMovement;
 use App\Models\Vehicle;
 use Illuminate\Support\Facades\Auth;
 use App\Services\AppointmentBillingService;
@@ -713,40 +712,70 @@ class AppointmentController extends Controller
             if ($status === 'Completada' && !$appointment->completed_at) {
                 $data['completed_at'] = now();
 
-                // Procesar deducción de stock si hay un servicio asociado
+                $productService = app(\App\Services\ProductService::class);
+
+                // Deducción por insumos del servicio (modelo Services.required_products)
                 if ($appointment->service_id) {
                     $service = Service::find($appointment->service_id);
                     if ($service && !empty($service->required_products)) {
                         foreach ($service->required_products as $req) {
                             $product = Product::find($req['product_id']);
                             if ($product) {
-                                // 1. Deduct stock
-                                $product->decrement('stock', $req['quantity']);
-
-                                // 2. Record Stock Movement (Kardex)
-                                StockMovement::create([
-                                    'company_id' => $appointment->company_id,
-                                    'branch_id' => $appointment->branch_id,
-                                    'product_id' => $product->id,
-                                    'movement_date' => now(),
-                                    'type' => 'Salida',
-                                    'quantity' => $req['quantity'],
-                                    'unit_cost' => $product->unit_price ?? 0,
-                                    'total_cost' => ($product->unit_price ?? 0) * $req['quantity'],
-                                    'source_type' => 'App\Models\Appointment',
-                                    'source_id' => $appointment->id,
-                                    'notes' => 'Salida automática por cita completada: ' . $appointment->id,
-                                    'created_by' => auth()->id() ?? 1,
-                                ]);
-
-                                Log::info("Stock deducido por cita completada", [
-                                    'appointment_id' => $appointment->id,
-                                    'product_id' => $product->id,
-                                    'quantity' => $req['quantity']
-                                ]);
+                                $qty = (float) ($req['quantity'] ?? 0);
+                                if ($qty <= 0) {
+                                    continue;
+                                }
+                                $productService->adjustStock(
+                                    $product,
+                                    null,
+                                    $qty,
+                                    'OUT',
+                                    'Salida por cita completada #' . $appointment->id,
+                                    [
+                                        'wrap_transaction' => false,
+                                        'source_type' => 'appointment',
+                                        'source_id' => $appointment->id,
+                                        'branch_id' => $appointment->branch_id,
+                                        'unit_cost' => (float) ($product->cost_price ?? 0),
+                                        'created_by' => auth()->id(),
+                                    ]
+                                );
                             }
                         }
                     }
+                }
+
+                // Deducción por ítems producto vendidos en la cita
+                $appointment->loadMissing('items');
+                foreach ($appointment->items as $item) {
+                    $itemType = strtoupper((string) ($item->item_type ?? ''));
+                    if (! in_array($itemType, ['PRODUCTO', 'PRODUCT'], true)) {
+                        continue;
+                    }
+                    $productId = $item->product_id ?? $item->item_id ?? null;
+                    if (! $productId) {
+                        continue;
+                    }
+                    $product = Product::find($productId);
+                    $qty = (float) ($item->quantity ?? 1);
+                    if (! $product || $qty <= 0) {
+                        continue;
+                    }
+                    $productService->adjustStock(
+                        $product,
+                        null,
+                        $qty,
+                        'OUT',
+                        'Salida por producto en cita #' . $appointment->id,
+                        [
+                            'wrap_transaction' => false,
+                            'source_type' => 'appointment_item',
+                            'source_id' => $appointment->id,
+                            'branch_id' => $appointment->branch_id,
+                            'unit_cost' => (float) ($product->cost_price ?? 0),
+                            'created_by' => auth()->id(),
+                        ]
+                    );
                 }
             }
             if ($status === 'Cancelada' && !$appointment->cancelled_at) {
@@ -764,6 +793,11 @@ class AppointmentController extends Controller
                 'data' => $appointment->load(['client', 'pet', 'vehicle', 'user', 'items.product'])
             ]);
 
+        } catch (\InvalidArgumentException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], 422);
         } catch (Exception $e) {
             Log::error("Error al cambiar estado de cita", [
                 'appointment_id' => $id,

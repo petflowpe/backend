@@ -269,13 +269,14 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'throttle:api', EnsureUserCompa
 
     // ========================
     // PRODUCTOS / SERVICIOS (CATÁLOGO)
+    // Rutas estáticas ANTES del apiResource para no capturar "low-stock" como {product}
     // ========================
+    Route::get('/products/low-stock', [ProductController::class, 'getLowStock']);
+    Route::get('/companies/{company}/products/kpis', [ProductController::class, 'getKPIs']);
+    Route::get('/companies/{company}/products', [ProductController::class, 'getByCompany']);
     Route::apiResource('products', ProductController::class)->except(['destroy']);
     Route::delete('/products/{product}', [ProductController::class, 'destroy']);
     Route::post('/products/{product}/activate', [ProductController::class, 'activate']);
-    Route::get('/companies/{company}/products', [ProductController::class, 'getByCompany']);
-    Route::get('/companies/{company}/products/kpis', [ProductController::class, 'getKPIs']);
-    Route::get('/products/low-stock', [ProductController::class, 'getLowStock']);
     Route::post('/products/{product}/adjust-stock', [ProductController::class, 'adjustStock']);
     Route::get('/products/{product}/kardex', [KardexController::class, 'index']);
 
@@ -300,16 +301,16 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'throttle:api', EnsureUserCompa
     // ========================
     // MARCAS
     // ========================
+    Route::get('/brands/kpis', [BrandController::class, 'getKPIs']);
     Route::apiResource('brands', BrandController::class);
     Route::post('/brands/{brand}/toggle-active', [BrandController::class, 'toggleActive']);
-    Route::get('/brands/kpis', [BrandController::class, 'getKPIs']);
 
     // ========================
     // PROVEEDORES
     // ========================
+    Route::get('/suppliers/kpis', [SupplierController::class, 'getKPIs']);
     Route::apiResource('suppliers', SupplierController::class);
     Route::post('/suppliers/{supplier}/toggle-active', [SupplierController::class, 'toggleActive']);
-    Route::get('/suppliers/kpis', [SupplierController::class, 'getKPIs']);
 
     // ========================
     // ÓRDENES DE COMPRA

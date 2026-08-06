@@ -14,7 +14,7 @@ class AdjustStockRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'area_id' => ['required', 'integer', 'exists:areas,id'],
+            'area_id' => ['nullable', 'integer', 'exists:areas,id'],
             'quantity' => ['required', 'numeric', 'min:0'],
             'type' => ['required', 'string', 'in:IN,OUT,ADJUST'],
             'notes' => ['nullable', 'string', 'max:500'],
