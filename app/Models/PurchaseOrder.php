@@ -15,6 +15,7 @@ class PurchaseOrder extends Model
     protected $fillable = [
         'company_id',
         'supplier_id',
+        'order_number',
         'order_date',
         'delivery_date',
         'status',
@@ -23,6 +24,9 @@ class PurchaseOrder extends Model
         'invoice_date',
         'invoice_total',
         'kardex_registered',
+        'payment_status',
+        'amount_paid',
+        'paid_at',
         'notes',
         'created_by',
     ];
@@ -31,8 +35,10 @@ class PurchaseOrder extends Model
         'order_date' => 'date',
         'delivery_date' => 'date',
         'invoice_date' => 'date',
+        'paid_at' => 'datetime',
         'total' => 'decimal:2',
         'invoice_total' => 'decimal:2',
+        'amount_paid' => 'decimal:2',
         'kardex_registered' => 'boolean',
     ];
 
