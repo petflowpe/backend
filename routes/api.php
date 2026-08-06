@@ -278,6 +278,8 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'throttle:api', EnsureUserCompa
     Route::delete('/products/{product}', [ProductController::class, 'destroy']);
     Route::post('/products/{product}/activate', [ProductController::class, 'activate']);
     Route::post('/products/{product}/adjust-stock', [ProductController::class, 'adjustStock']);
+    Route::post('/products/{product}/image', [ProductController::class, 'uploadImage']);
+    Route::delete('/products/{product}/image', [ProductController::class, 'deleteImage']);
     Route::get('/products/{product}/kardex', [KardexController::class, 'index']);
 
     // ========================
