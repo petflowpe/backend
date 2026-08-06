@@ -6,7 +6,6 @@ use App\Http\Controllers\Controller;
 use App\Models\Appointment;
 use App\Models\Invoice;
 use App\Models\Payment;
-use App\Services\AppointmentPaymentStatusService;
 use App\Services\Payment\MercadoPagoService;
 use App\Services\Payment\NiubizService;
 use Illuminate\Http\JsonResponse;
@@ -104,15 +103,11 @@ class PaymentController extends Controller
             'notes' => $validated['notes'] ?? null,
         ]);
 
-        if ($appointmentId) {
-            app(AppointmentPaymentStatusService::class)->sync(
-                Appointment::findOrFail($appointmentId)
-            );
-        }
+        app(\App\Services\PaymentLedgerSyncService::class)->onPaymentCompleted($payment->fresh());
 
         return response()->json([
             'success' => true,
-            'data' => $this->formatPayment($payment->load(['invoice.client', 'appointment.client'])),
+            'data' => $this->formatPayment($payment->fresh()->load(['invoice.client', 'appointment.client'])),
         ], 201);
     }
 
@@ -226,6 +221,9 @@ class PaymentController extends Controller
             'id' => $p->id,
             'invoice_id' => $p->invoice_id,
             'appointment_id' => $p->appointment_id,
+            'cash_session_id' => $p->cash_session_id,
+            'in_cash_register' => ! empty($p->cash_session_id)
+                || ! empty(($p->metadata['cash_movement_id'] ?? null)),
             'client' => $clientName,
             'amount' => (float) $p->amount,
             'fee' => (float) ($p->fee ?? 0),

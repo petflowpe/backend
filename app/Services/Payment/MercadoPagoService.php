@@ -166,13 +166,10 @@ class MercadoPagoService
             'metadata' => array_merge($payment->metadata ?? [], ['mp_payment' => $mpData]),
         ]);
 
-        if ($status === 'completed' && $payment->appointment_id) {
-            $payment->appointment?->update([
-                'payment_status' => 'Pagado',
-                'payment_method' => 'Tarjeta',
-            ]);
+        if ($status === 'completed') {
+            app(\App\Services\PaymentLedgerSyncService::class)->onPaymentCompleted($payment->fresh());
         }
 
-        return $payment;
+        return $payment->fresh();
     }
 }
