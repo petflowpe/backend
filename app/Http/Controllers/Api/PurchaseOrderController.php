@@ -13,6 +13,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\View;
 
 class PurchaseOrderController extends Controller
@@ -209,6 +210,90 @@ class PurchaseOrderController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Error al generar PDF: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Adjuntar factura PDF/imagen del proveedor.
+     */
+    public function uploadInvoiceAttachment(Request $request, PurchaseOrder $purchase_order): JsonResponse
+    {
+        $request->validate([
+            'file' => 'required|file|mimes:pdf,jpg,jpeg,png,webp|max:10240',
+        ]);
+
+        try {
+            $file = $request->file('file');
+            $dir = 'purchase-invoices/' . $purchase_order->company_id . '/' . $purchase_order->id;
+
+            if ($purchase_order->invoice_attachment_path && Storage::disk('local')->exists($purchase_order->invoice_attachment_path)) {
+                Storage::disk('local')->delete($purchase_order->invoice_attachment_path);
+            }
+
+            $path = $file->storeAs(
+                $dir,
+                'factura_' . now()->format('Ymd_His') . '.' . $file->getClientOriginalExtension(),
+                'local'
+            );
+
+            $purchase_order->update([
+                'invoice_attachment_path' => $path,
+                'invoice_attachment_name' => $file->getClientOriginalName(),
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Factura adjunta',
+                'data' => $purchase_order->fresh(['supplier', 'items.product']),
+            ]);
+        } catch (Exception $e) {
+            Log::error('Error al adjuntar factura de OC', [
+                'purchase_order_id' => $purchase_order->id,
+                'error' => $e->getMessage(),
+            ]);
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al subir adjunto',
+            ], 500);
+        }
+    }
+
+    public function downloadInvoiceAttachment(PurchaseOrder $purchase_order)
+    {
+        if (! $purchase_order->invoice_attachment_path || ! Storage::disk('local')->exists($purchase_order->invoice_attachment_path)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'No hay factura adjunta',
+            ], 404);
+        }
+
+        $name = $purchase_order->invoice_attachment_name
+            ?: basename($purchase_order->invoice_attachment_path);
+
+        return Storage::disk('local')->download($purchase_order->invoice_attachment_path, $name);
+    }
+
+    public function deleteInvoiceAttachment(PurchaseOrder $purchase_order): JsonResponse
+    {
+        try {
+            if ($purchase_order->invoice_attachment_path && Storage::disk('local')->exists($purchase_order->invoice_attachment_path)) {
+                Storage::disk('local')->delete($purchase_order->invoice_attachment_path);
+            }
+            $purchase_order->update([
+                'invoice_attachment_path' => null,
+                'invoice_attachment_name' => null,
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Adjunto eliminado',
+                'data' => $purchase_order->fresh(['supplier', 'items.product']),
+            ]);
+        } catch (Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al eliminar adjunto',
             ], 500);
         }
     }

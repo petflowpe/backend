@@ -23,6 +23,8 @@ class PurchaseOrder extends Model
         'invoice_number',
         'invoice_date',
         'invoice_total',
+        'invoice_attachment_path',
+        'invoice_attachment_name',
         'kardex_registered',
         'payment_status',
         'amount_paid',
