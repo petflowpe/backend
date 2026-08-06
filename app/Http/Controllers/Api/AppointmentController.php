@@ -259,18 +259,16 @@ class AppointmentController extends Controller
                 ], 422);
             }
 
-            // 3. Validar Stock si hay service_id
+            // 3. Validar Stock si hay service_id (insumos del servicio)
             if (isset($data['service_id'])) {
-                $service = Service::find($data['service_id']);
-                if ($service && !empty($service->required_products)) {
-                    foreach ($service->required_products as $req) {
-                        $product = Product::find($req['product_id']);
-                        if (!$product || $product->stock < $req['quantity']) {
-                            return response()->json([
-                                'success' => false,
-                                'message' => "Stock insuficiente del producto: " . ($product ? $product->name : "ID " . $req['product_id'])
-                            ], 422);
-                        }
+                foreach ($this->resolveRequiredProducts((int) $data['service_id']) as $req) {
+                    $product = Product::find($req['product_id'] ?? null);
+                    $qty = (float) ($req['quantity'] ?? 0);
+                    if (!$product || $product->stock < $qty) {
+                        return response()->json([
+                            'success' => false,
+                            'message' => 'Stock insuficiente del producto: ' . ($product ? $product->name : 'ID ' . ($req['product_id'] ?? '?')),
+                        ], 422);
                     }
                 }
             }
@@ -714,34 +712,30 @@ class AppointmentController extends Controller
 
                 $productService = app(\App\Services\ProductService::class);
 
-                // Deducción por insumos del servicio (modelo Services.required_products)
+                // Deducción por insumos del servicio
                 if ($appointment->service_id) {
-                    $service = Service::find($appointment->service_id);
-                    if ($service && !empty($service->required_products)) {
-                        foreach ($service->required_products as $req) {
-                            $product = Product::find($req['product_id']);
-                            if ($product) {
-                                $qty = (float) ($req['quantity'] ?? 0);
-                                if ($qty <= 0) {
-                                    continue;
-                                }
-                                $productService->adjustStock(
-                                    $product,
-                                    null,
-                                    $qty,
-                                    'OUT',
-                                    'Salida por cita completada #' . $appointment->id,
-                                    [
-                                        'wrap_transaction' => false,
-                                        'source_type' => 'appointment',
-                                        'source_id' => $appointment->id,
-                                        'branch_id' => $appointment->branch_id,
-                                        'unit_cost' => (float) ($product->cost_price ?? 0),
-                                        'created_by' => auth()->id(),
-                                    ]
-                                );
-                            }
+                    $requiredProducts = $this->resolveRequiredProducts((int) $appointment->service_id);
+                    foreach ($requiredProducts as $req) {
+                        $product = Product::find($req['product_id'] ?? null);
+                        $qty = (float) ($req['quantity'] ?? 0);
+                        if (! $product || $qty <= 0) {
+                            continue;
                         }
+                        $productService->adjustStock(
+                            $product,
+                            null,
+                            $qty,
+                            'OUT',
+                            'Salida por insumos de servicio en cita #' . $appointment->id,
+                            [
+                                'wrap_transaction' => false,
+                                'source_type' => 'appointment',
+                                'source_id' => $appointment->id,
+                                'branch_id' => $appointment->branch_id,
+                                'unit_cost' => (float) ($product->cost_price ?? 0),
+                                'created_by' => auth()->id(),
+                            ]
+                        );
                     }
                 }
 
@@ -1275,5 +1269,28 @@ class AppointmentController extends Controller
                 'message' => 'Error al registrar cobro: ' . $e->getMessage(),
             ], 500);
         }
+    }
+
+    /**
+     * Insumos requeridos: tabla services O product SERVICIO (metadata.required_products).
+     *
+     * @return array<int, array{product_id?: int, quantity?: float|int}>
+     */
+    private function resolveRequiredProducts(int $serviceId): array
+    {
+        $fromService = Service::find($serviceId)?->required_products;
+        if (is_array($fromService) && count($fromService) > 0) {
+            return $fromService;
+        }
+
+        $catalogService = Product::query()
+            ->where('id', $serviceId)
+            ->where('item_type', 'SERVICIO')
+            ->first();
+
+        $meta = is_array($catalogService?->metadata) ? $catalogService->metadata : [];
+        $fromProduct = $meta['required_products'] ?? [];
+
+        return is_array($fromProduct) ? $fromProduct : [];
     }
 }
