@@ -27,7 +27,7 @@
         <tr>
             <td class="label">Empresa</td>
             <td>
-                {{ $company->razon_social ?? $company->name ?? '—' }}
+                {{ $company->razon_social ?? $company->nombre_comercial ?? '—' }}
                 @if(!empty($company->ruc))
                     <br>RUC: {{ $company->ruc }}
                 @endif
