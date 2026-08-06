@@ -319,6 +319,13 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'throttle:api', EnsureUserCompa
     // ========================
     Route::get('/purchase-orders', [PurchaseOrderController::class, 'index']);
     Route::post('/purchase-orders', [PurchaseOrderController::class, 'store']);
+    Route::get('/purchase-orders/suggest-restock', [PurchaseOrderController::class, 'suggestRestock']);
+    Route::post('/purchase-orders/from-restock', [PurchaseOrderController::class, 'createFromRestock']);
+    Route::get('/purchase-orders/delivery-alerts', [PurchaseOrderController::class, 'deliveryAlerts']);
+    Route::get('/purchase-orders/price-history', [PurchaseOrderController::class, 'priceHistory']);
+    Route::get('/purchase-orders/payables', [PurchaseOrderController::class, 'payables']);
+    Route::match(['get', 'put', 'post'], '/purchase-orders/settings', [PurchaseOrderController::class, 'settings']);
+    Route::get('/purchase-orders/lookup-barcode', [PurchaseOrderController::class, 'lookupBarcode']);
     Route::get('/purchase-orders/{purchase_order}/download-pdf', [PurchaseOrderController::class, 'downloadPdf']);
     Route::post('/purchase-orders/{purchase_order}/invoice-attachment', [PurchaseOrderController::class, 'uploadInvoiceAttachment']);
     Route::get('/purchase-orders/{purchase_order}/invoice-attachment', [PurchaseOrderController::class, 'downloadInvoiceAttachment']);
@@ -330,6 +337,10 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'throttle:api', EnsureUserCompa
     Route::post('/purchase-orders/{purchase_order}/receive', [PurchaseOrderController::class, 'receive']);
     Route::post('/purchase-orders/{purchase_order}/complete', [PurchaseOrderController::class, 'complete']);
     Route::post('/purchase-orders/{purchase_order}/pay', [PurchaseOrderController::class, 'pay']);
+    Route::post('/purchase-orders/{purchase_order}/cancel', [PurchaseOrderController::class, 'cancel']);
+    Route::post('/purchase-orders/{purchase_order}/approve', [PurchaseOrderController::class, 'approve']);
+    Route::post('/purchase-orders/{purchase_order}/reject', [PurchaseOrderController::class, 'reject']);
+    Route::post('/purchase-orders/{purchase_order}/email', [PurchaseOrderController::class, 'emailSupplier']);
 
     // ========================
     // CORRELATIVOS

@@ -89,6 +89,9 @@ class PurchaseOrderController extends Controller
             'order_date' => 'required|date',
             'delivery_date' => 'nullable|date',
             'notes' => 'nullable|string|max:1000',
+            'default_area_id' => 'nullable|integer',
+            'igv_rate' => 'nullable|numeric|min:0|max:100',
+            'prices_include_igv' => 'nullable|boolean',
             'items' => 'required|array|min:1',
             'items.*.product_id' => 'required|integer|exists:products,id',
             'items.*.quantity' => 'required|numeric|min:0.001',
@@ -101,19 +104,35 @@ class PurchaseOrderController extends Controller
             if (!$companyId) {
                 return response()->json(['message' => 'company_id es requerido o el usuario debe tener empresa asignada.'], 422);
             }
-            $total = 0;
+            $linesTotal = 0;
             foreach ($validated['items'] as $row) {
-                $total += (float) $row['quantity'] * (float) $row['unit_cost'];
+                $linesTotal += (float) $row['quantity'] * (float) $row['unit_cost'];
             }
+
+            $taxOverrides = [];
+            if (array_key_exists('igv_rate', $validated) && $validated['igv_rate'] !== null) {
+                $taxOverrides['igv_rate'] = $validated['igv_rate'];
+            }
+            if (array_key_exists('prices_include_igv', $validated)) {
+                $taxOverrides['prices_include_igv'] = $validated['prices_include_igv'];
+            }
+            $taxes = $this->purchaseOrderService->computeTaxes($linesTotal, $companyId, $taxOverrides ?: null);
+            $approval = $this->purchaseOrderService->resolveApprovalStatus($companyId, $taxes['total']);
 
             $order = PurchaseOrder::create([
                 'company_id' => $companyId,
                 'supplier_id' => $validated['supplier_id'],
+                'default_area_id' => $validated['default_area_id'] ?? null,
                 'order_number' => $this->purchaseOrderService->nextOrderNumber($companyId),
                 'order_date' => $validated['order_date'],
                 'delivery_date' => $validated['delivery_date'] ?? null,
                 'status' => 'pending',
-                'total' => round($total, 2),
+                'approval_status' => $approval,
+                'subtotal' => $taxes['subtotal'],
+                'igv_rate' => $taxes['igv_rate'],
+                'igv_amount' => $taxes['igv_amount'],
+                'prices_include_igv' => $taxes['prices_include_igv'],
+                'total' => $taxes['total'],
                 'payment_status' => 'unpaid',
                 'amount_paid' => 0,
                 'notes' => $validated['notes'] ?? null,
@@ -133,11 +152,15 @@ class PurchaseOrderController extends Controller
                 ]);
             }
 
+            $this->purchaseOrderService->syncPayable($order->fresh(['supplier']));
+
             DB::commit();
-            $order->load(['supplier', 'items.product:id,name,code']);
+            $order->load(['supplier', 'items.product:id,name,code', 'payable']);
             return response()->json([
                 'success' => true,
-                'message' => 'Orden de compra creada',
+                'message' => $approval === 'pending_approval'
+                    ? 'Orden creada — pendiente de aprobación'
+                    : 'Orden de compra creada',
                 'data' => $order,
             ], 201);
         } catch (Exception $e) {
@@ -324,15 +347,24 @@ class PurchaseOrderController extends Controller
 
         try {
             DB::beginTransaction();
-            $total = 0;
+            $linesTotal = 0;
             foreach ($validated['items'] as $row) {
-                $total += (float) $row['quantity'] * (float) $row['unit_cost'];
+                $linesTotal += (float) $row['quantity'] * (float) $row['unit_cost'];
             }
+            $taxes = $this->purchaseOrderService->computeTaxes($linesTotal, (int) $purchase_order->company_id);
 
             $purchase_order->update([
                 'delivery_date' => $validated['delivery_date'] ?? null,
                 'notes' => $validated['notes'] ?? null,
-                'total' => round($total, 2),
+                'subtotal' => $taxes['subtotal'],
+                'igv_rate' => $taxes['igv_rate'],
+                'igv_amount' => $taxes['igv_amount'],
+                'prices_include_igv' => $taxes['prices_include_igv'],
+                'total' => $taxes['total'],
+                'approval_status' => $this->purchaseOrderService->resolveApprovalStatus(
+                    (int) $purchase_order->company_id,
+                    $taxes['total']
+                ),
             ]);
 
             $purchase_order->items()->delete();
@@ -349,8 +381,9 @@ class PurchaseOrderController extends Controller
                 ]);
             }
 
+            $this->purchaseOrderService->syncPayable($purchase_order->fresh(['supplier']));
             DB::commit();
-            $purchase_order->load(['supplier', 'items.product:id,name,code,stock']);
+            $purchase_order->load(['supplier', 'items.product:id,name,code,stock', 'payable']);
             return response()->json([
                 'success' => true,
                 'message' => 'Orden actualizada',
@@ -399,6 +432,8 @@ class PurchaseOrderController extends Controller
             'items.*.item_id' => 'nullable|integer',
             'items.*.product_id' => 'nullable|integer',
             'items.*.quantity' => 'required|numeric|min:0.001',
+            'items.*.area_id' => 'nullable|integer',
+            'area_id' => 'nullable|integer',
             'invoice_number' => 'nullable|string|max:50',
             'invoice_date' => 'nullable|date',
             'invoice_total' => 'nullable|numeric|min:0',
@@ -413,7 +448,8 @@ class PurchaseOrderController extends Controller
                     'invoice_date' => $validated['invoice_date'] ?? null,
                     'invoice_total' => $validated['invoice_total'] ?? null,
                 ],
-                $request->user()?->id
+                $request->user()?->id,
+                isset($validated['area_id']) ? (int) $validated['area_id'] : null
             );
 
             return response()->json([
@@ -438,13 +474,15 @@ class PurchaseOrderController extends Controller
             'invoice_number' => 'nullable|string|max:50',
             'invoice_date' => 'nullable|date',
             'invoice_total' => 'nullable|numeric|min:0',
+            'area_id' => 'nullable|integer',
         ]);
 
         try {
             $order = $this->purchaseOrderService->receiveAllRemaining(
                 $purchase_order,
                 $validated,
-                $request->user()?->id
+                $request->user()?->id,
+                isset($validated['area_id']) ? (int) $validated['area_id'] : null
             );
 
             return response()->json([
@@ -483,7 +521,7 @@ class PurchaseOrderController extends Controller
 
             return response()->json([
                 'success' => true,
-                'message' => 'Pago registrado',
+                'message' => 'Pago registrado (CxP actualizada)',
                 'data' => $order,
             ]);
         } catch (Exception $e) {
@@ -494,12 +532,223 @@ class PurchaseOrderController extends Controller
         }
     }
 
+    public function cancel(Request $request, PurchaseOrder $purchase_order): JsonResponse
+    {
+        $validated = $request->validate([
+            'reason' => 'required|string|max:500',
+        ]);
+
+        try {
+            $order = $this->purchaseOrderService->cancel(
+                $purchase_order,
+                $validated['reason'],
+                $request->user()?->id
+            );
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Orden anulada; stock recibido revertido en kardex',
+                'data' => $order,
+            ]);
+        } catch (Exception $e) {
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 422);
+        }
+    }
+
+    public function approve(Request $request, PurchaseOrder $purchase_order): JsonResponse
+    {
+        $notes = $request->validate(['notes' => 'nullable|string|max:500'])['notes'] ?? null;
+        try {
+            return response()->json([
+                'success' => true,
+                'message' => 'Orden aprobada',
+                'data' => $this->purchaseOrderService->approve($purchase_order, $request->user()?->id, $notes),
+            ]);
+        } catch (Exception $e) {
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 422);
+        }
+    }
+
+    public function reject(Request $request, PurchaseOrder $purchase_order): JsonResponse
+    {
+        $notes = $request->validate(['notes' => 'nullable|string|max:500'])['notes'] ?? null;
+        try {
+            return response()->json([
+                'success' => true,
+                'message' => 'Orden rechazada',
+                'data' => $this->purchaseOrderService->reject($purchase_order, $request->user()?->id, $notes),
+            ]);
+        } catch (Exception $e) {
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 422);
+        }
+    }
+
+    public function suggestRestock(Request $request): JsonResponse
+    {
+        $companyId = (int) ($request->attributes->get('scope_company_id')
+            ?? $request->integer('company_id')
+            ?: $request->user()?->company_id);
+        if (! $companyId) {
+            return response()->json(['success' => false, 'message' => 'company_id requerido'], 422);
+        }
+
+        return response()->json([
+            'success' => true,
+            'data' => $this->purchaseOrderService->suggestRestock($companyId),
+        ]);
+    }
+
+    public function createFromRestock(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'company_id' => 'nullable|integer',
+            'groups' => 'required|array|min:1',
+            'groups.*.supplier_id' => 'required|integer',
+            'groups.*.items' => 'required|array|min:1',
+            'groups.*.items.*.product_id' => 'required|integer',
+            'groups.*.items.*.quantity' => 'required|numeric|min:0.001',
+            'groups.*.items.*.unit_cost' => 'nullable|numeric|min:0',
+        ]);
+        $companyId = (int) ($validated['company_id']
+            ?? $request->attributes->get('scope_company_id')
+            ?: $request->user()?->company_id);
+        if (! $companyId) {
+            return response()->json(['success' => false, 'message' => 'company_id requerido'], 422);
+        }
+
+        try {
+            $orders = $this->purchaseOrderService->createFromRestockSuggestions(
+                $companyId,
+                $validated['groups'],
+                $request->user()?->id
+            );
+
+            return response()->json([
+                'success' => true,
+                'message' => $orders->count() . ' orden(es) generada(s)',
+                'data' => $orders->values(),
+            ], 201);
+        } catch (Exception $e) {
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 422);
+        }
+    }
+
+    public function deliveryAlerts(Request $request): JsonResponse
+    {
+        $companyId = (int) ($request->attributes->get('scope_company_id')
+            ?? $request->integer('company_id')
+            ?: $request->user()?->company_id);
+        if (! $companyId) {
+            return response()->json(['success' => false, 'message' => 'company_id requerido'], 422);
+        }
+
+        return response()->json([
+            'success' => true,
+            'data' => $this->purchaseOrderService->deliveryAlerts($companyId),
+        ]);
+    }
+
+    public function priceHistory(Request $request): JsonResponse
+    {
+        $companyId = (int) ($request->attributes->get('scope_company_id')
+            ?? $request->integer('company_id')
+            ?: $request->user()?->company_id);
+        if (! $companyId) {
+            return response()->json(['success' => false, 'message' => 'company_id requerido'], 422);
+        }
+
+        return response()->json([
+            'success' => true,
+            'data' => $this->purchaseOrderService->priceHistory(
+                $companyId,
+                $request->filled('product_id') ? $request->integer('product_id') : null,
+                $request->filled('supplier_id') ? $request->integer('supplier_id') : null,
+                $request->integer('limit', 80)
+            ),
+        ]);
+    }
+
+    public function emailSupplier(PurchaseOrder $purchase_order): JsonResponse
+    {
+        try {
+            $order = $this->purchaseOrderService->sendToSupplier($purchase_order);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Orden enviada al proveedor',
+                'data' => $order,
+            ]);
+        } catch (Exception $e) {
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 422);
+        }
+    }
+
+    public function lookupBarcode(Request $request): JsonResponse
+    {
+        $validated = $request->validate(['code' => 'required|string|max:100']);
+        $companyId = (int) ($request->attributes->get('scope_company_id')
+            ?? $request->integer('company_id')
+            ?: $request->user()?->company_id);
+        $product = $this->purchaseOrderService->findProductByBarcode($companyId, $validated['code']);
+        if (! $product) {
+            return response()->json(['success' => false, 'message' => 'Producto no encontrado'], 404);
+        }
+
+        return response()->json(['success' => true, 'data' => $product]);
+    }
+
+    public function settings(Request $request): JsonResponse
+    {
+        $companyId = (int) ($request->attributes->get('scope_company_id')
+            ?? $request->integer('company_id')
+            ?: $request->user()?->company_id);
+        if (! $companyId) {
+            return response()->json(['success' => false, 'message' => 'company_id requerido'], 422);
+        }
+
+        if ($request->isMethod('put') || $request->isMethod('post')) {
+            $data = $request->validate([
+                'approval_threshold' => 'nullable|numeric|min:0',
+                'price_alert_percent' => 'nullable|numeric|min:0|max:100',
+                'delivery_alert_days' => 'nullable|integer|min:0|max:60',
+                'default_igv_rate' => 'nullable|numeric|min:0|max:100',
+                'prices_include_igv' => 'nullable|boolean',
+            ]);
+            $settings = \App\Models\CompanyPurchaseSetting::forCompany($companyId);
+            $settings->fill(array_filter($data, fn ($v) => $v !== null));
+            $settings->save();
+
+            return response()->json(['success' => true, 'data' => $settings]);
+        }
+
+        return response()->json([
+            'success' => true,
+            'data' => \App\Models\CompanyPurchaseSetting::forCompany($companyId),
+        ]);
+    }
+
+    public function payables(Request $request): JsonResponse
+    {
+        $companyId = (int) ($request->attributes->get('scope_company_id')
+            ?? $request->integer('company_id')
+            ?: $request->user()?->company_id);
+        $rows = \App\Models\PurchasePayable::query()
+            ->with(['supplier:id,name', 'purchaseOrder:id,order_number,status'])
+            ->where('company_id', $companyId)
+            ->when($request->filled('status'), fn ($q) => $q->where('status', $request->get('status')))
+            ->orderByDesc('id')
+            ->limit(200)
+            ->get();
+
+        return response()->json(['success' => true, 'data' => $rows]);
+    }
+
     public function destroy(PurchaseOrder $purchase_order): JsonResponse
     {
         if ($purchase_order->kardex_registered || (float) $purchase_order->items()->sum('quantity_received') > 0) {
             return response()->json([
                 'success' => false,
-                'message' => 'No se puede eliminar una orden con recepción registrada',
+                'message' => 'No se puede eliminar una orden con recepción registrada. Use anulación.',
             ], 422);
         }
         $purchase_order->items()->delete();
