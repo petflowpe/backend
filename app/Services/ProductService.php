@@ -33,13 +33,17 @@ class ProductService
                 );
             }
 
+            // area_id vive en product_stocks, no en products
+            $areaId = isset($data['area_id']) ? (int) $data['area_id'] : null;
+            unset($data['area_id']);
+
             $product = $this->repository->create($data);
 
             // Crear stock inicial si se proporciona área
-            if (isset($data['area_id']) && isset($data['stock'])) {
+            if ($areaId && isset($data['stock'])) {
                 ProductStock::create([
                     'product_id' => $product->id,
-                    'area_id' => $data['area_id'],
+                    'area_id' => $areaId,
                     'quantity' => $data['stock'],
                     'min_stock' => $data['min_stock'] ?? null,
                     'max_stock' => $data['max_stock'] ?? null,

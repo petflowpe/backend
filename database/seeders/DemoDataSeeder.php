@@ -59,6 +59,7 @@ class DemoDataSeeder extends Seeder
             ServiceSeeder::class,
             ClientsAndPetsSeeder::class,
             NotificationSeeder::class,
+            LogisticsDemoSeeder::class,
         ]);
     }
 }

@@ -2,6 +2,7 @@
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
@@ -60,8 +61,16 @@ return new class extends Migration
                 $table->boolean('price_alert')->default(false);
                 $table->timestamp('recorded_at')->useCurrent();
                 $table->timestamps();
-                $table->index(['company_id', 'product_id', 'supplier_id']);
+                $table->index(['company_id', 'product_id', 'supplier_id'], 'spp_hist_company_product_supplier_idx');
             });
+        } else {
+            $indexExists = collect(DB::select('SHOW INDEX FROM supplier_product_price_history'))
+                ->contains(fn ($row) => ($row->Key_name ?? '') === 'spp_hist_company_product_supplier_idx');
+            if (! $indexExists) {
+                Schema::table('supplier_product_price_history', function (Blueprint $table) {
+                    $table->index(['company_id', 'product_id', 'supplier_id'], 'spp_hist_company_product_supplier_idx');
+                });
+            }
         }
 
         if (! Schema::hasTable('purchase_payables')) {
