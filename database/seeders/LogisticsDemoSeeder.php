@@ -103,6 +103,7 @@ class LogisticsDemoSeeder extends Seeder
                 'user_id' => $driver->id,
                 'service_name' => $i % 2 === 0 ? 'Baño Premium' : 'Consulta Domiciliaria',
                 'service_category' => $i % 2 === 0 ? 'Peluquería' : 'MovilVet',
+                'service_type' => $i % 2 === 0 ? 'Peluquería' : 'Consulta',
                 'date' => $date,
                 'time' => $time,
                 'duration' => 60,
