@@ -24,6 +24,7 @@ class AppointmentBillingService
 
         $tipo = $this->resolveDocumentType($appointment->client);
         $payload = $this->buildDocumentPayload($appointment, $tipo);
+        $cobroStatus = $this->paymentStatusService->resolveStatus($appointment);
 
         return [
             'appointment_id' => $appointment->id,
@@ -35,6 +36,10 @@ class AppointmentBillingService
             'total' => (float) $appointment->total,
             'already_issued' => $appointment->boleta_id || $appointment->invoice_id,
             'numero_existente' => $this->existingDocumentNumber($appointment),
+            'payment_status' => $cobroStatus,
+            'suggested_forma_pago' => $payload['forma_pago_tipo'] ?? 'Contado',
+            'supports_credito' => $tipo === '01',
+            'default_credit_days' => 30,
         ];
     }
 
@@ -61,7 +66,7 @@ class AppointmentBillingService
         // Validar stock antes de emitir; el descuento kardex ocurre tras crear el CPE.
         $this->stockService->assertStockAvailable($appointment);
 
-        $payload = $this->buildDocumentPayload($appointment, $tipo, $options['serie'] ?? null);
+        $payload = $this->buildDocumentPayload($appointment, $tipo, $options['serie'] ?? null, $options);
         $sendSunat = (bool) ($options['send_to_sunat'] ?? false);
 
         if ($tipo === '01') {
@@ -86,9 +91,12 @@ class AppointmentBillingService
                 'tipo_documento' => '01',
                 'document' => $invoice->load(['client', 'branch']),
                 'numero_completo' => $invoice->numero_completo,
+                'forma_pago_tipo' => $invoice->forma_pago_tipo,
+                'fecha_vencimiento' => optional($invoice->fecha_vencimiento)->toDateString(),
             ];
         }
 
+        // Boleta: SUNAT no usa forma_pago Contado/Credito; se emite al contado operativo.
         $boleta = $this->documentService->createBoleta($payload);
         $boleta->update(['appointment_id' => $appointment->id]);
 
@@ -107,6 +115,7 @@ class AppointmentBillingService
             'tipo_documento' => '03',
             'document' => $boleta->load(['client', 'branch']),
             'numero_completo' => $boleta->numero_completo,
+            'forma_pago_tipo' => 'Contado',
         ];
     }
 
@@ -126,8 +135,12 @@ class AppointmentBillingService
         return '03';
     }
 
-    private function buildDocumentPayload(Appointment $appointment, string $tipo, ?string $serieOverride = null): array
-    {
+    private function buildDocumentPayload(
+        Appointment $appointment,
+        string $tipo,
+        ?string $serieOverride = null,
+        array $options = []
+    ): array {
         $client = $appointment->client;
         if (!$client) {
             throw new Exception('La cita no tiene cliente asociado');
@@ -152,21 +165,41 @@ class AppointmentBillingService
         $petLabel = $appointment->pet?->name ? " — Mascota: {$appointment->pet->name}" : '';
         $detalles = $this->buildDetalles($appointment, $petLabel);
 
+        $fechaEmision = ($appointment->date ?? now())->format('Y-m-d');
+        $total = (float) ($appointment->total ?: $appointment->price ?: 0);
+
         // Contado solo si el cobro está al 100%; si no, crédito (facturar sin cobrar / parcial).
         $cobroStatus = $this->paymentStatusService->resolveStatus($appointment);
         $paymentMethod = strtolower((string) ($appointment->payment_method ?? ''));
-        $formaPago = ($cobroStatus === 'Pagado' && !str_contains($paymentMethod, 'credito'))
+        $suggested = ($cobroStatus === 'Pagado' && !str_contains($paymentMethod, 'credito'))
             ? 'Contado'
             : 'Credito';
+
+        // Boleta: siempre Contado a nivel operativo (no hay forma_pago SUNAT Contado/Credito).
+        if ($tipo !== '01') {
+            $formaPago = 'Contado';
+            $fechaVencimiento = null;
+            $cuotas = null;
+        } else {
+            $formaPago = $this->normalizeFormaPago($options['forma_pago_tipo'] ?? $suggested);
+            [$fechaVencimiento, $cuotas] = $this->resolveCreditTerms(
+                $formaPago,
+                $fechaEmision,
+                $total,
+                $options
+            );
+        }
 
         return [
             'company_id' => $appointment->company_id,
             'branch_id' => $branchId,
             'serie' => strtoupper($serie),
-            'fecha_emision' => ($appointment->date ?? now())->format('Y-m-d'),
+            'fecha_emision' => $fechaEmision,
+            'fecha_vencimiento' => $fechaVencimiento,
             'moneda' => 'PEN',
             'metodo_envio' => 'individual',
             'forma_pago_tipo' => $formaPago,
+            'forma_pago_cuotas' => $cuotas,
             'client' => [
                 'tipo_documento' => $this->normalizeTipoDoc($client),
                 'numero_documento' => $client->numero_documento,
@@ -185,9 +218,71 @@ class AppointmentBillingService
                 'appointment_id' => $appointment->id,
                 'tracking_code' => $appointment->tracking_code,
                 'vehicle_id' => $appointment->vehicle_id,
+                'forma_pago_tipo' => $formaPago,
+                'credit_days' => $formaPago === 'Credito'
+                    ? (int) ($options['credit_days'] ?? 30)
+                    : null,
             ],
             'usuario_creacion' => 'appointment:' . $appointment->id,
         ];
+    }
+
+    private function normalizeFormaPago(?string $value): string
+    {
+        $v = strtolower(trim((string) $value));
+        if (in_array($v, ['credito', 'crédito', 'credit'], true)) {
+            return 'Credito';
+        }
+
+        return 'Contado';
+    }
+
+    /**
+     * @return array{0: ?string, 1: ?array}
+     */
+    private function resolveCreditTerms(string $formaPago, string $fechaEmision, float $total, array $options): array
+    {
+        if ($formaPago !== 'Credito') {
+            return [null, null];
+        }
+
+        $cuotasRaw = $options['forma_pago_cuotas'] ?? null;
+        if (is_array($cuotasRaw) && count($cuotasRaw) > 0) {
+            $cuotas = [];
+            $maxDate = null;
+            foreach ($cuotasRaw as $c) {
+                $fecha = $c['fecha_pago'] ?? null;
+                $monto = (float) ($c['monto'] ?? 0);
+                if (! $fecha || $monto <= 0) {
+                    continue;
+                }
+                $cuotas[] = [
+                    'moneda' => $c['moneda'] ?? 'PEN',
+                    'monto' => round($monto, 2),
+                    'fecha_pago' => $fecha,
+                ];
+                if (! $maxDate || $fecha > $maxDate) {
+                    $maxDate = $fecha;
+                }
+            }
+            if ($cuotas === []) {
+                throw new Exception('Indique al menos una cuota válida (monto y fecha)');
+            }
+
+            return [$maxDate, $cuotas];
+        }
+
+        $days = max(1, min(365, (int) ($options['credit_days'] ?? 30)));
+        $due = \Illuminate\Support\Carbon::parse($fechaEmision)->addDays($days)->toDateString();
+
+        // Una sola cuota por defecto: compatible con Tesorería y SUNAT Credito.
+        $cuotas = [[
+            'moneda' => 'PEN',
+            'monto' => round(max(0, $total), 2),
+            'fecha_pago' => $due,
+        ]];
+
+        return [$due, $cuotas];
     }
 
     private function buildDetalles(Appointment $appointment, string $petSuffix): array

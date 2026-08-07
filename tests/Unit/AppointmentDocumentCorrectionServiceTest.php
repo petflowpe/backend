@@ -7,6 +7,8 @@ use App\Services\DocumentService;
 use Carbon\Carbon;
 use Mockery;
 
+uses(Tests\TestCase::class);
+
 it('permite anular dentro de 7 días desde emisión y no después', function () {
     $documentService = Mockery::mock(DocumentService::class);
     $service = new AppointmentDocumentCorrectionService($documentService);

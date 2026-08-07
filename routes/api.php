@@ -18,6 +18,7 @@ use App\Http\Controllers\Api\ClientController;
 use App\Http\Controllers\Api\CorrelativeController;
 use App\Http\Controllers\Api\CashSessionController;
 use App\Http\Controllers\Api\PaymentController;
+use App\Http\Controllers\Api\TreasuryController;
 use App\Http\Controllers\Api\ReportController;
 use App\Http\Controllers\Api\KardexController;
 use App\Http\Controllers\Api\ProductController;
@@ -368,6 +369,9 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'throttle:api', EnsureUserCompa
     Route::get('/payments', [PaymentController::class, 'index']);
     Route::post('/payments', [PaymentController::class, 'store']);
     Route::post('/payments/checkout', [PaymentController::class, 'createCheckout']);
+
+    // Tesorería (CxC / CxP)
+    Route::get('/treasury/receivables', [TreasuryController::class, 'receivables']);
 
     Route::get('/companies/{company}/payment-gateways', [\App\Http\Controllers\Api\PaymentGatewayController::class, 'show']);
     Route::put('/companies/{company}/payment-gateways', [\App\Http\Controllers\Api\PaymentGatewayController::class, 'update']);

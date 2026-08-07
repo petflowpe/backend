@@ -892,6 +892,12 @@ class AppointmentController extends Controller
             'tipo' => 'nullable|in:auto,01,03',
             'serie' => 'nullable|string|max:4',
             'send_to_sunat' => 'nullable|boolean',
+            'forma_pago_tipo' => 'nullable|string|in:Contado,Credito,contado,credito',
+            'credit_days' => 'nullable|integer|min:1|max:365',
+            'forma_pago_cuotas' => 'nullable|array|min:1',
+            'forma_pago_cuotas.*.moneda' => 'nullable|string|in:PEN,USD',
+            'forma_pago_cuotas.*.monto' => 'required_with:forma_pago_cuotas|numeric|min:0.01',
+            'forma_pago_cuotas.*.fecha_pago' => 'required_with:forma_pago_cuotas|date',
         ]);
 
         if ($validator->fails()) {
@@ -903,6 +909,9 @@ class AppointmentController extends Controller
                 'tipo' => $request->input('tipo', 'auto'),
                 'serie' => $request->input('serie'),
                 'send_to_sunat' => $request->boolean('send_to_sunat'),
+                'forma_pago_tipo' => $request->input('forma_pago_tipo'),
+                'credit_days' => $request->input('credit_days'),
+                'forma_pago_cuotas' => $request->input('forma_pago_cuotas'),
             ]);
 
             return response()->json([

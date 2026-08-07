@@ -103,7 +103,7 @@ class CompanyOnboardingService
                     'environment' => 'beta',
                 ],
                 [
-                    'service_type' => 'invoice',
+                    'service_type' => 'facturacion',
                     'config_data' => [
                         'working_hours' => $workingHours,
                         'onboarding_completed_at' => now()->toIso8601String(),

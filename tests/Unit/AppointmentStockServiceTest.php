@@ -5,6 +5,8 @@ use App\Services\AppointmentStockService;
 use App\Services\ProductService;
 use Illuminate\Database\Eloquent\Collection;
 
+uses(Tests\TestCase::class);
+
 it('no descuenta de nuevo si alreadyDeducted', function () {
     $productService = Mockery::mock(ProductService::class);
     $productService->shouldNotReceive('adjustStock');
