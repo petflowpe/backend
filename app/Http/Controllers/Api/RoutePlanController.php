@@ -17,12 +17,15 @@ class RoutePlanController extends Controller
 {
     private function resolveCompanyId(Request $request): int
     {
-        return (int) (
-            $request->integer('company_id')
-            ?: \App\Helpers\ScopeHelper::companyId($request)
-            ?: $request->user()?->company_id
-            ?: 1
-        );
+        $companyId = \App\Helpers\ScopeHelper::companyId($request)
+            ?? ($request->filled('company_id') ? $request->integer('company_id') : null)
+            ?? $request->user()?->company_id;
+
+        if (! $companyId) {
+            throw new Exception('company_id requerido o el usuario debe tener empresa asignada.');
+        }
+
+        return (int) $companyId;
     }
 
     private function formatAppointmentStop(Appointment $apt, int $order): array

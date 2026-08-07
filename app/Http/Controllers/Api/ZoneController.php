@@ -14,7 +14,17 @@ class ZoneController extends Controller
     public function index(Request $request): JsonResponse
     {
         try {
-            $companyId = $request->integer('company_id', 1);
+            $companyId = \App\Helpers\ScopeHelper::companyId($request)
+                ?? ($request->filled('company_id') ? $request->integer('company_id') : null)
+                ?? $request->user()?->company_id;
+
+            if (! $companyId) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'company_id requerido o el usuario debe tener empresa asignada.',
+                ], 422);
+            }
+
             $query = Zone::where('company_id', $companyId)->orderBy('name');
             if ($request->boolean('only_active', false)) {
                 $query->where('active', true);
