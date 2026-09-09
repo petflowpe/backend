@@ -75,7 +75,9 @@ jobs:
 
           env_val() {
             local key="$1"
-            grep -E "^${key}=" .env | tail -n 1 | cut -d= -f2- | tr -d '\r' | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//"
+            local line
+            line="$(grep -E "^${key}=" .env | tail -n 1 || true)"
+            printf '%s' "$line" | cut -d= -f2- | tr -d '\r' | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//"
           }
 
           APP_ENV_VAL="$(env_val APP_ENV)"
@@ -147,7 +149,9 @@ jobs:
 
           env_val() {
             local key="$1"
-            grep -E "^${key}=" .env | tail -n 1 | cut -d= -f2- | tr -d '\r' | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//"
+            local line
+            line="$(grep -E "^${key}=" .env | tail -n 1 || true)"
+            printf '%s' "$line" | cut -d= -f2- | tr -d '\r' | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//"
           }
 
           APP_ENV_VAL="$(env_val APP_ENV)"
