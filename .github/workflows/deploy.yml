@@ -57,12 +57,63 @@ jobs:
             exit 1
           fi
 
+      - name: Validar .env en el VPS antes de sincronizar
+        run: |
+          ssh -i ~/.ssh/deploy_key \
+            -o BatchMode=yes \
+            -o ConnectTimeout=30 \
+            -o StrictHostKeyChecking=no \
+            "$SSH_USER@$SSH_HOST" \
+            "DEPLOY_PATH='$DEPLOY_PATH' bash -s" << 'REMOTE_SCRIPT'
+          set -euo pipefail
+          cd "$DEPLOY_PATH"
+
+          if [ ! -f .env ]; then
+            echo "ERROR: falta .env en $DEPLOY_PATH (debe existir en el servidor; no se sube por rsync)"
+            exit 1
+          fi
+
+          env_val() {
+            local key="$1"
+            grep -E "^${key}=" .env | tail -n 1 | cut -d= -f2- | tr -d '\r' | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//"
+          }
+
+          APP_ENV_VAL="$(env_val APP_ENV)"
+          APP_DEBUG_VAL="$(env_val APP_DEBUG)"
+          ALLOW_INSECURE_VAL="$(env_val ALLOW_INSECURE_ENV)"
+
+          insecure=0
+          if [ "$APP_DEBUG_VAL" = "true" ] || [ "$APP_DEBUG_VAL" = "1" ]; then
+            insecure=1
+            echo "ERROR: APP_DEBUG=${APP_DEBUG_VAL:-<vacío>} — en producción debe ser false"
+          fi
+          if [ "$APP_ENV_VAL" != "production" ]; then
+            insecure=1
+            echo "ERROR: APP_ENV=${APP_ENV_VAL:-<vacío>} — en producción debe ser production"
+          fi
+
+          if [ "$insecure" = "1" ]; then
+            if [ "$ALLOW_INSECURE_VAL" = "true" ] || [ "$ALLOW_INSECURE_VAL" = "1" ]; then
+              echo "::warning::Entorno inseguro, pero ALLOW_INSECURE_ENV=true — el deploy continúa (solo temporal)."
+            else
+              echo "::error::Hardening: corrige el .env en el VPS ANTES de rsync. Un rsync --delete sin vendor deja la API en 500."
+              echo "  APP_ENV=production"
+              echo "  APP_DEBUG=false"
+              echo "Temporal (no recomendado): ALLOW_INSECURE_ENV=true"
+              exit 1
+            fi
+          else
+            echo "OK hardening: APP_ENV=production y APP_DEBUG=false"
+          fi
+          REMOTE_SCRIPT
+
       - name: Sincronizar codigo al VPS
         run: |
           rsync -az --delete \
             --exclude .git \
             --exclude .github \
             --exclude .env \
+            --exclude vendor \
             --exclude storage/app \
             --exclude storage/framework \
             --exclude storage/logs \
