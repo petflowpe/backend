@@ -19,6 +19,10 @@ class Supplier extends Model
         'document_type',
         'document_number',
         'supplier_type',
+        'specialty',
+        'professional_license',
+        'clinic_name',
+        'fee_rate',
         'email',
         'phone',
         'contact_name',
@@ -38,7 +42,15 @@ class Supplier extends Model
         'active' => 'boolean',
         'sort_order' => 'integer',
         'credit_days' => 'integer',
+        'fee_rate' => 'decimal:2',
     ];
+
+    public function isExternalDoctor(): bool
+    {
+        $type = (string) ($this->supplier_type ?? '');
+
+        return in_array($type, ['Médico Externo', 'Honorarios'], true);
+    }
 
     public function company(): BelongsTo
     {
