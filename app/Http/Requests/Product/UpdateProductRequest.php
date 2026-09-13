@@ -3,6 +3,7 @@
 namespace App\Http\Requests\Product;
 
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
 
 class UpdateProductRequest extends FormRequest
 {
@@ -13,11 +14,25 @@ class UpdateProductRequest extends FormRequest
 
     public function rules(): array
     {
+        $product = $this->route('product');
+        $productId = is_object($product) ? $product->id : $product;
+        $companyId = is_object($product) ? $product->company_id : null;
+
         return [
             'category_id' => ['nullable', 'integer', 'exists:categories,id'],
             'unit_id' => ['nullable', 'integer', 'exists:units,id'],
             'brand_id' => ['nullable', 'integer', 'exists:brands,id'],
             'supplier_id' => ['nullable', 'integer', 'exists:suppliers,id'],
+            // Preferido para ajustes de stock (product_stocks); no es columna de products.
+            'area_id' => ['nullable', 'integer', 'exists:areas,id'],
+            'code' => [
+                'nullable',
+                'string',
+                'max:50',
+                Rule::unique('products', 'code')
+                    ->where(fn ($q) => $companyId ? $q->where('company_id', $companyId) : $q)
+                    ->ignore($productId),
+            ],
             'name' => ['sometimes', 'string', 'max:255'],
             'brand' => ['nullable', 'string', 'max:100'], // Mantener para compatibilidad
             'barcode' => ['nullable', 'string', 'max:50'],

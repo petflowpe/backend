@@ -76,6 +76,22 @@ class ProductService
     {
         DB::beginTransaction();
         try {
+            // products no tiene columna area_id: preferencia de almacén va en metadata
+            if (array_key_exists('area_id', $data)) {
+                $preferredAreaId = $data['area_id'];
+                unset($data['area_id']);
+                $meta = is_array($product->metadata) ? $product->metadata : [];
+                if (isset($data['metadata']) && is_array($data['metadata'])) {
+                    $meta = array_merge($meta, $data['metadata']);
+                }
+                if ($preferredAreaId === null || $preferredAreaId === '') {
+                    unset($meta['preferred_area_id']);
+                } else {
+                    $meta['preferred_area_id'] = (int) $preferredAreaId;
+                }
+                $data['metadata'] = $meta;
+            }
+
             $product = $this->repository->update($product, $data);
             DB::commit();
             return $product->fresh(['category', 'unitRelation', 'brandRelation', 'supplierRelation', 'productStocks']);
@@ -203,6 +219,11 @@ class ProductService
 
         if ($product->area_id) {
             return (int) $product->area_id;
+        }
+
+        $meta = is_array($product->metadata) ? $product->metadata : [];
+        if (! empty($meta['preferred_area_id'])) {
+            return (int) $meta['preferred_area_id'];
         }
 
         $areaId = \App\Models\Area::query()
