@@ -59,6 +59,54 @@ class BatchService
     }
 
     /**
+     * Cuadra lotes contra product_stocks por almacén: el faltante va a SIN-LOTE y el sobrante se
+     * descuenta primero de SIN-LOTE y luego en orden FEFO.
+     *
+     * @return array<int, array{area_id: int, stock: float, batches: float}> almacenes descuadrados
+     */
+    public function reconcile(Product $product, bool $dryRun = false): array
+    {
+        $stocks = ProductStock::where('product_id', $product->id)->pluck('quantity', 'area_id');
+        $covered = ProductBatch::where('product_id', $product->id)
+            ->selectRaw('area_id, SUM(quantity_available) as qty')
+            ->groupBy('area_id')
+            ->pluck('qty', 'area_id');
+
+        $diffs = [];
+        foreach ($stocks->keys()->merge($covered->keys())->unique() as $areaId) {
+            $stock = max(0.0, (float) ($stocks[$areaId] ?? 0));
+            $batches = (float) ($covered[$areaId] ?? 0);
+            if (abs($stock - $batches) <= self::EPS) {
+                continue;
+            }
+            $diffs[] = ['area_id' => (int) $areaId, 'stock' => $stock, 'batches' => $batches];
+            if ($dryRun) {
+                continue;
+            }
+
+            if ($stock > $batches) {
+                $this->ensureCoverage($product, (int) $areaId, $stock);
+                continue;
+            }
+
+            $excess = $batches - $stock;
+            $ordered = $this->fefoQuery($product->id, (int) $areaId)->lockForUpdate()->get()
+                ->sortBy(fn (ProductBatch $b) => $b->batch_number === ProductBatch::NO_BATCH ? 0 : 1)
+                ->values();
+            foreach ($ordered as $batch) {
+                if ($excess <= self::EPS) {
+                    break;
+                }
+                $take = min($excess, (float) $batch->quantity_available);
+                $batch->decrement('quantity_available', $take);
+                $excess -= $take;
+            }
+        }
+
+        return $diffs;
+    }
+
+    /**
      * Lotes con saldo de un área, en orden de consumo FEFO (vence antes primero, sin fecha al final).
      */
     public function fefoQuery(int $productId, int $areaId)

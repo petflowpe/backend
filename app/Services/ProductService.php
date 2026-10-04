@@ -224,6 +224,31 @@ class ProductService
         }
     }
 
+    /**
+     * Almacén de la sucursal con stock para la salida: el primero que cubre la cantidad, si no el de más saldo.
+     * Sin sucursal o sin almacenes de esa sucursal con stock, usa el almacén por defecto del producto.
+     */
+    public function resolveAreaForBranch(Product $product, ?int $branchId, float $quantity = 0): ?int
+    {
+        if ($branchId) {
+            $stocks = ProductStock::query()
+                ->where('product_stocks.product_id', $product->id)
+                ->join('areas', 'areas.id', '=', 'product_stocks.area_id')
+                ->where('areas.branch_id', $branchId)
+                ->where('product_stocks.quantity', '>', 0)
+                ->orderByDesc('product_stocks.quantity')
+                ->get(['product_stocks.area_id', 'product_stocks.quantity', 'product_stocks.reserved_quantity']);
+
+            if ($stocks->isNotEmpty()) {
+                $covering = $stocks->first(fn ($s) => (float) $s->quantity - (float) $s->reserved_quantity + 0.0005 >= $quantity);
+
+                return (int) ($covering ?? $stocks->first())->area_id;
+            }
+        }
+
+        return $this->resolveDefaultAreaId($product);
+    }
+
     public function resolveDefaultAreaId(Product $product): ?int
     {
         $fromStock = ProductStock::where('product_id', $product->id)->value('area_id');

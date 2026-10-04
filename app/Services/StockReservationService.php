@@ -22,9 +22,9 @@ class StockReservationService
      *
      * @param  array<int, float>  $quantities  product_id => cantidad
      */
-    public function sync(int $companyId, string $sourceType, int $sourceId, array $quantities): void
+    public function sync(int $companyId, string $sourceType, int $sourceId, array $quantities, ?int $branchId = null): void
     {
-        DB::transaction(function () use ($companyId, $sourceType, $sourceId, $quantities) {
+        DB::transaction(function () use ($companyId, $sourceType, $sourceId, $quantities, $branchId) {
             $this->releaseRows($sourceType, $sourceId, StockReservation::RELEASED);
 
             foreach ($quantities as $productId => $qty) {
@@ -39,7 +39,7 @@ class StockReservationService
                     continue;
                 }
 
-                $areaId = $this->productService->resolveDefaultAreaId($product);
+                $areaId = $this->productService->resolveAreaForBranch($product, $branchId, $qty);
                 if (! $areaId) {
                     continue;
                 }
@@ -56,6 +56,22 @@ class StockReservationService
                 $this->refreshReserved($product->id, $areaId);
             }
         });
+    }
+
+    /**
+     * Almacén de cada reserva activa de un origen.
+     *
+     * @return array<int, int> product_id => area_id
+     */
+    public function activeAreas(string $sourceType, int $sourceId): array
+    {
+        return StockReservation::where('source_type', $sourceType)
+            ->where('source_id', $sourceId)
+            ->where('status', StockReservation::ACTIVE)
+            ->whereNotNull('area_id')
+            ->pluck('area_id', 'product_id')
+            ->map(fn ($id) => (int) $id)
+            ->all();
     }
 
     public function release(string $sourceType, int $sourceId): void

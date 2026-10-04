@@ -135,7 +135,7 @@ class AppointmentStockService
     }
 
     /**
-     * Reserva insumos e ítems PRODUCTO de una cita abierta; libera si está cancelada o ya facturada.
+     * Reserva insumos e ítems PRODUCTO de una cita abierta; libera si se cancela y consume al descontarse.
      */
     public function syncReservation(Appointment $appointment): void
     {
@@ -145,9 +145,14 @@ class AppointmentStockService
             return;
         }
 
-        if ($appointment->boleta_id || $appointment->invoice_id || $this->alreadyDeducted($appointment)) {
+        if ($this->alreadyDeducted($appointment)) {
             $this->reservations->consume(self::RESERVATION_SOURCE, $appointment->id);
 
+            return;
+        }
+
+        // Facturada pero aún sin descontar: deductOnInvoice usa el almacén reservado y luego la consume.
+        if ($appointment->boleta_id || $appointment->invoice_id) {
             return;
         }
 
@@ -155,7 +160,8 @@ class AppointmentStockService
             (int) $appointment->company_id,
             self::RESERVATION_SOURCE,
             $appointment->id,
-            $this->totalRequirements($appointment)
+            $this->totalRequirements($appointment),
+            $appointment->branch_id ? (int) $appointment->branch_id : null
         );
     }
 
@@ -174,6 +180,8 @@ class AppointmentStockService
         $this->assertStockAvailable($appointment);
         $req = $this->requirements($appointment);
         $userId = Auth::id();
+        $reservedAreas = $this->reservations->activeAreas(self::RESERVATION_SOURCE, $appointment->id);
+        $branchId = $appointment->branch_id ? (int) $appointment->branch_id : null;
 
         $groups = [
             ['rows' => $req['supplies'], 'source' => 'appointment', 'label' => 'insumos'],
@@ -188,7 +196,7 @@ class AppointmentStockService
                 }
                 $this->productService->adjustStock(
                     $product,
-                    null,
+                    $this->outputArea($product, $qty, $reservedAreas[$product->id] ?? null, $branchId),
                     $qty,
                     'OUT',
                     "Salida por {$group['label']} al facturar cita #{$appointment->id}",
@@ -205,6 +213,23 @@ class AppointmentStockService
         }
 
         $this->reservations->consume(self::RESERVATION_SOURCE, $appointment->id);
+    }
+
+    /**
+     * Sale del almacén donde se reservó si aún tiene la cantidad; si no, de un almacén de la sucursal.
+     */
+    private function outputArea(Product $product, float $qty, ?int $reservedAreaId, ?int $branchId): ?int
+    {
+        if ($reservedAreaId) {
+            $physical = (float) \App\Models\ProductStock::where('product_id', $product->id)
+                ->where('area_id', $reservedAreaId)
+                ->value('quantity');
+            if ($physical + 0.0005 >= $qty) {
+                return $reservedAreaId;
+            }
+        }
+
+        return $this->productService->resolveAreaForBranch($product, $branchId, $qty);
     }
 
     /**

@@ -232,7 +232,7 @@ class DocumentService
 
             $productService->adjustStock(
                 $product,
-                null,
+                $productService->resolveAreaForBranch($product, $document->branch_id ? (int) $document->branch_id : null, $qty),
                 $qty,
                 'OUT',
                 'Salida por ' . $label . ' ' . ($document->numero_completo ?? $document->id),
@@ -259,7 +259,7 @@ class DocumentService
             }
             $productService->adjustStock(
                 $supply,
-                null,
+                $productService->resolveAreaForBranch($supply, $document->branch_id ? (int) $document->branch_id : null, $qty),
                 $qty,
                 'OUT',
                 'Insumos por servicio en ' . $label . ' ' . ($document->numero_completo ?? $document->id),
@@ -863,6 +863,15 @@ class DocumentService
                         'description' => $result['cdr_response']->getDescription()
                     ])
                 ]);
+
+                try {
+                    DB::transaction(fn () => $this->returnStockForSummaryVoids($summary));
+                } catch (\Throwable $e) {
+                    Log::error('No se pudo reponer stock de boletas anuladas por resumen', [
+                        'summary_id' => $summary->id,
+                        'error' => $e->getMessage(),
+                    ]);
+                }
                 
                 return [
                     'success' => true,
@@ -1137,6 +1146,42 @@ class DocumentService
             'Devolución por NC ' . ($creditNote->numero_completo ?? $creditNote->serie . '-' . $creditNote->correlativo)
                 . ' (' . $creditNote->num_doc_afectado . ')'
         );
+    }
+
+    /**
+     * Repone el stock de las boletas anuladas (estado 3) en un resumen diario aceptado por SUNAT.
+     * Usa source_type voided_boleta, así que no duplica una baja ya repuesta por otra vía.
+     */
+    protected function returnStockForSummaryVoids(DailySummary $summary): void
+    {
+        foreach ($summary->detalles ?? [] as $line) {
+            if ((string) ($line['tipo_documento'] ?? '') !== '03' || (string) ($line['estado'] ?? '') !== '3') {
+                continue;
+            }
+            $parts = explode('-', (string) ($line['serie_numero'] ?? ''), 2);
+            if (count($parts) !== 2 || $parts[0] === '' || $parts[1] === '') {
+                continue;
+            }
+            [$serie, $numero] = $parts;
+            $plain = ltrim($numero, '0') ?: '0';
+
+            $boleta = Boleta::where('company_id', $summary->company_id)
+                ->where('serie', $serie)
+                ->whereIn('correlativo', array_unique([$numero, $plain, str_pad($plain, 8, '0', STR_PAD_LEFT)]))
+                ->first();
+            if (! $boleta) {
+                continue;
+            }
+
+            $this->restockSoldItems(
+                $boleta,
+                'boleta',
+                null,
+                'voided_boleta',
+                $boleta->id,
+                'Devolución por anulación en resumen diario ' . $summary->correlativo . ' (' . $boleta->numero_completo . ')'
+            );
+        }
     }
 
     /**

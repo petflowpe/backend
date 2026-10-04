@@ -5,6 +5,7 @@ namespace App\Console\Commands;
 use App\Models\Product;
 use App\Models\ProductStock;
 use App\Models\StockMovement;
+use App\Services\BatchService;
 use App\Services\ProductService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
@@ -117,15 +118,53 @@ class ReconcileInventoryCommand extends Command
 
         if ($rows === []) {
             $this->info('Inventario cuadrado: no hay diferencias.');
-
-            return self::SUCCESS;
+        } else {
+            $this->table(['Empresa', 'ID', 'Producto', 'Stock', 'Σ almacenes', 'Kardex', 'Ajuste kardex'], $rows);
+            $this->line($dryRun
+                ? '[dry-run] ' . count($rows) . ' productos con diferencias. Ejecuta sin --dry-run para corregir.'
+                : "Corregidos: {$fixedAreas} saldos de almacén/total, {$fixedKardex} ajustes de kardex, {$skipped} omitidos.");
         }
 
-        $this->table(['Empresa', 'ID', 'Producto', 'Stock', 'Σ almacenes', 'Kardex', 'Ajuste kardex'], $rows);
-        $this->line($dryRun
-            ? '[dry-run] ' . count($rows) . ' productos con diferencias. Ejecuta sin --dry-run para corregir.'
-            : "Corregidos: {$fixedAreas} saldos de almacén/total, {$fixedKardex} ajustes de kardex, {$skipped} omitidos.");
+        $this->reconcileBatches($companyId, $dryRun);
 
         return self::SUCCESS;
+    }
+
+    private function reconcileBatches(?int $companyId, bool $dryRun): void
+    {
+        $batchService = app(BatchService::class);
+        $query = Product::withoutGlobalScopes()
+            ->where('item_type', 'PRODUCTO')
+            ->where('track_batches', true)
+            ->orderBy('id');
+        if ($companyId) {
+            $query->where('company_id', $companyId);
+        }
+
+        $rows = [];
+        foreach ($query->cursor() as $product) {
+            $diffs = DB::transaction(fn () => $batchService->reconcile($product, $dryRun));
+            foreach ($diffs as $d) {
+                $rows[] = [
+                    $product->company_id,
+                    $product->id,
+                    mb_strimwidth((string) $product->name, 0, 30, '…'),
+                    $d['area_id'],
+                    $d['stock'],
+                    $d['batches'],
+                ];
+            }
+        }
+
+        if ($rows === []) {
+            $this->info('Lotes cuadrados con el stock por almacén.');
+
+            return;
+        }
+
+        $this->table(['Empresa', 'ID', 'Producto', 'Almacén', 'Stock', 'Σ lotes'], $rows);
+        $this->line($dryRun
+            ? '[dry-run] ' . count($rows) . ' almacén(es) con lotes descuadrados.'
+            : count($rows) . ' almacén(es) con lotes cuadrados (faltante a SIN-LOTE, sobrante descontado).');
     }
 }
