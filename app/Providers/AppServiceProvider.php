@@ -34,6 +34,8 @@ class AppServiceProvider extends ServiceProvider
         });
 
         \App\Models\Pet::observe(\App\Observers\PetObserver::class);
+        \App\Models\Appointment::observe(\App\Observers\AppointmentStockObserver::class);
+        \App\Models\AppointmentItem::observe(\App\Observers\AppointmentStockObserver::class);
 
         if ($this->app->runningInConsole()) {
             $this->commands([

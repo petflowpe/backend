@@ -29,7 +29,7 @@ class PurchaseOrderController extends Controller
             if (! $companyId) {
                 return response()->json(['success' => false, 'message' => 'company_id requerido'], 422);
             }
-            $query = PurchaseOrder::with(['supplier:id,name,company_id', 'items.product:id,name,code,stock'])
+            $query = PurchaseOrder::with(['supplier:id,name,company_id', 'items.product:id,name,code,stock,track_batches'])
                 ->byCompany($companyId)
                 ->orderByDesc('order_date')
                 ->orderByDesc('id');
@@ -188,7 +188,7 @@ class PurchaseOrderController extends Controller
 
     public function show(PurchaseOrder $purchase_order): JsonResponse
     {
-        $purchase_order->load(['supplier', 'items.product:id,name,code,stock,unit_price', 'payments.user:id,name']);
+        $purchase_order->load(['supplier', 'items.product:id,name,code,stock,unit_price,track_batches', 'payments.user:id,name']);
         return response()->json([
             'success' => true,
             'data' => $purchase_order,
@@ -406,7 +406,7 @@ class PurchaseOrderController extends Controller
 
             $this->purchaseOrderService->syncPayable($purchase_order->fresh(['supplier']));
             DB::commit();
-            $purchase_order->load(['supplier', 'items.product:id,name,code,stock', 'payable']);
+            $purchase_order->load(['supplier', 'items.product:id,name,code,stock,track_batches', 'payable']);
             return response()->json([
                 'success' => true,
                 'message' => 'Orden actualizada',
@@ -458,8 +458,10 @@ class PurchaseOrderController extends Controller
             'items.*.item_id' => 'nullable|integer',
             'items.*.product_id' => 'nullable|integer',
             'items.*.quantity' => 'required|numeric|min:0.001',
-            'items.*.area_id' => 'nullable|integer',
-            'area_id' => 'nullable|integer',
+            'items.*.area_id' => ['nullable', 'integer', \App\Support\CompanyExists::in('areas', (int) $purchase_order->company_id)],
+            'items.*.batch_number' => 'nullable|string|max:60',
+            'items.*.expiry_date' => 'nullable|date',
+            'area_id' => ['nullable', 'integer', \App\Support\CompanyExists::in('areas', (int) $purchase_order->company_id)],
             'invoice_number' => 'nullable|string|max:50',
             'invoice_date' => 'nullable|date',
             'invoice_total' => 'nullable|numeric|min:0',
@@ -500,7 +502,7 @@ class PurchaseOrderController extends Controller
             'invoice_number' => 'nullable|string|max:50',
             'invoice_date' => 'nullable|date',
             'invoice_total' => 'nullable|numeric|min:0',
-            'area_id' => 'nullable|integer',
+            'area_id' => ['nullable', 'integer', \App\Support\CompanyExists::in('areas', (int) $purchase_order->company_id)],
         ]);
 
         try {

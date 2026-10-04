@@ -389,7 +389,14 @@ class ProductController extends Controller
                 isset($data['area_id']) ? (int) $data['area_id'] : null,
                 (float) $data['quantity'],
                 $data['type'],
-                $data['notes'] ?? null
+                $data['notes'] ?? null,
+                [
+                    'batch' => [
+                        'batch_number' => $data['batch_number'] ?? null,
+                        'expiry_date' => $data['expiry_date'] ?? null,
+                    ],
+                    'batch_id' => $data['batch_id'] ?? null,
+                ]
             );
 
             return response()->json([

@@ -282,17 +282,24 @@ class AppointmentController extends Controller
                 ], 422);
             }
 
-            // 3. Validar Stock si hay service_id (insumos del servicio)
+            // 3. Validar stock libre (descontando reservas de otras citas) de los insumos del servicio
             if (isset($data['service_id'])) {
-                foreach (app(\App\Services\AppointmentStockService::class)->resolveRequiredProducts((int) $data['service_id']) as $req) {
-                    $product = Product::find($req['product_id'] ?? null);
-                    $qty = (float) ($req['quantity'] ?? 0);
-                    if (!$product || $product->stock < $qty) {
-                        return response()->json([
-                            'success' => false,
-                            'message' => 'Stock insuficiente del producto: ' . ($product ? $product->name : 'ID ' . ($req['product_id'] ?? '?')),
-                        ], 422);
+                $stockService = app(\App\Services\AppointmentStockService::class);
+                $needed = [];
+                foreach ($stockService->resolveRequiredProducts((int) $data['service_id']) as $req) {
+                    $pid = (int) ($req['product_id'] ?? 0);
+                    if ($pid > 0) {
+                        $needed[$pid] = ($needed[$pid] ?? 0) + (float) ($req['quantity'] ?? 0);
                     }
+                }
+                $short = $stockService->shortages((int) $data['company_id'], $needed);
+                if ($short !== []) {
+                    $first = $short[0];
+                    return response()->json([
+                        'success' => false,
+                        'message' => "Stock insuficiente del producto: {$first['name']} (necesario {$first['required']}, libre {$first['available']})",
+                        'shortages' => $short,
+                    ], 422);
                 }
             }
 

@@ -53,6 +53,7 @@ class UpdateProductRequest extends FormRequest
             'stock' => ['nullable', 'numeric', 'min:0'],
             'min_stock' => ['nullable', 'numeric', 'min:0'],
             'max_stock' => ['nullable', 'numeric', 'min:0'],
+            'track_batches' => ['nullable', 'boolean'],
             'active' => ['nullable', 'boolean'],
             'metadata' => ['nullable', 'array'],
         ];

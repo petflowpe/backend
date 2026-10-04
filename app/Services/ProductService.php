@@ -40,6 +40,8 @@ class ProductService
             // El stock solo entra por adjustStock para que áreas, total y kardex cuadren.
             $initialStock = (float) ($data['stock'] ?? 0);
             $data['stock'] = 0;
+            $initialBatch = is_array($data['initial_batch'] ?? null) ? $data['initial_batch'] : null;
+            unset($data['initial_batch']);
 
             $product = $this->repository->create($data);
 
@@ -49,6 +51,7 @@ class ProductService
                     'wrap_transaction' => false,
                     'source_type' => 'initial',
                     'unit_cost' => (float) ($data['cost_price'] ?? 0),
+                    'batch' => $initialBatch,
                 ]);
             }
 
@@ -84,7 +87,11 @@ class ProductService
                 $data['metadata'] = $meta;
             }
 
+            $wasTracking = (bool) $product->track_batches;
             $product = $this->repository->update($product, $data);
+            if (! $wasTracking && $product->track_batches) {
+                app(BatchService::class)->initializeFor($product);
+            }
             DB::commit();
             return $product->fresh(['category', 'unitRelation', 'brandRelation', 'supplierRelation', 'productStocks']);
         } catch (\Exception $e) {
@@ -174,7 +181,7 @@ class ProductService
                 ? (float) $options['unit_cost']
                 : (float) ($product->cost_price ?? 0);
 
-            StockMovement::create([
+            $movement = StockMovement::create([
                 'company_id' => $product->company_id,
                 'branch_id' => $options['branch_id'] ?? null,
                 'area_id' => $resolvedAreaId,
@@ -190,6 +197,8 @@ class ProductService
                 'notes' => $notes ?? "Ajuste de stock: {$oldQuantity} -> {$productStock->quantity}",
                 'created_by' => $options['created_by'] ?? auth()->id(),
             ]);
+
+            app(BatchService::class)->apply($product, (int) $resolvedAreaId, $movement, $oldQuantity, $options);
 
             return $productStock->fresh();
         };

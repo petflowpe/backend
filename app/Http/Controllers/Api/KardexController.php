@@ -21,6 +21,8 @@ class KardexController extends Controller
         'sale' => 'venta',
         'appointment' => 'servicio',
         'appointment_item' => 'servicio',
+        'invoice_supply' => 'servicio',
+        'boleta_supply' => 'servicio',
         'initial' => 'inicial',
         'return' => 'devolucion',
         'credit_note' => 'devolucion',
@@ -28,6 +30,8 @@ class KardexController extends Controller
         'voided_boleta' => 'devolucion',
         'adjustment' => 'ajuste',
         'reconciliation' => 'ajuste',
+        'expiry' => 'merma',
+        'shrinkage' => 'merma',
     ];
 
     public function index(Request $request, Product $product): JsonResponse
@@ -79,9 +83,18 @@ class KardexController extends Controller
             ];
         });
 
+        $byArea = $this->balancesByArea($product);
+        $areaId = $request->filled('area_id') ? $request->integer('area_id') : null;
+
         // Saldo de kardex sin filtro de fecha final, para comparar contra el stock real.
-        $kardexTotal = $this->signedTotals(StockMovement::where('product_id', $product->id))['qty'];
-        $actualStock = (float) $product->stock;
+        if ($areaId) {
+            $areaRow = collect($byArea)->firstWhere('area_id', $areaId);
+            $kardexTotal = (float) ($areaRow['kardex'] ?? 0);
+            $actualStock = (float) ($areaRow['stock'] ?? 0);
+        } else {
+            $kardexTotal = $this->signedTotals(StockMovement::where('product_id', $product->id))['qty'];
+            $actualStock = (float) $product->stock;
+        }
 
         return response()->json([
             'success' => true,
@@ -95,8 +108,42 @@ class KardexController extends Controller
                 'current_value' => round($actualStock * (float) ($product->cost_price ?? 0), 2),
                 'kardex_balance' => round($kardexTotal, 3),
                 'difference' => round($actualStock - $kardexTotal, 3),
+                'area_id' => $areaId,
+                'by_area' => $byArea,
             ],
         ]);
+    }
+
+    /**
+     * Stock físico (product_stocks) vs saldo de kardex por almacén.
+     *
+     * @return array<int, array{area_id: ?int, area: ?string, stock: float, reserved: float, kardex: float, difference: float}>
+     */
+    private function balancesByArea(Product $product): array
+    {
+        $kardex = StockMovement::where('product_id', $product->id)
+            ->selectRaw("area_id, SUM(CASE WHEN UPPER(type) = 'OUT' THEN -ABS(quantity) WHEN UPPER(type) = 'IN' THEN ABS(quantity) ELSE quantity END) as qty")
+            ->groupBy('area_id')
+            ->pluck('qty', 'area_id');
+
+        $stocks = $product->productStocks()->with('area:id,name')->get()->keyBy('area_id');
+
+        $areaIds = collect($stocks->keys())->merge($kardex->keys())->unique();
+
+        return $areaIds->map(function ($areaId) use ($stocks, $kardex) {
+            $stock = $stocks->get($areaId);
+            $stockQty = (float) ($stock->quantity ?? 0);
+            $kardexQty = (float) ($kardex[$areaId] ?? 0);
+
+            return [
+                'area_id' => $areaId ? (int) $areaId : null,
+                'area' => $stock?->area?->name ?? ($areaId ? \App\Models\Area::find($areaId)?->name : 'Sin almacén'),
+                'stock' => round($stockQty, 3),
+                'reserved' => round((float) ($stock->reserved_quantity ?? 0), 3),
+                'kardex' => round($kardexQty, 3),
+                'difference' => round($stockQty - $kardexQty, 3),
+            ];
+        })->sortBy('area')->values()->all();
     }
 
     public function summary(Request $request): JsonResponse
@@ -144,6 +191,7 @@ class KardexController extends Controller
         $query = StockMovement::where('company_id', $companyId)
             ->with(['product:id,code,name', 'user:id,name', 'area:id,name'])
             ->when($request->filled('product_id'), fn ($q) => $q->where('product_id', $request->integer('product_id')))
+            ->when($request->filled('area_id'), fn ($q) => $q->where('area_id', $request->integer('area_id')))
             ->when($from, fn ($q) => $q->where('movement_date', '>=', $from))
             ->when($to, fn ($q) => $q->where('movement_date', '<=', $to))
             ->orderBy('product_id')

@@ -298,7 +298,13 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'throttle:api', EnsureUserCompa
         Route::get('/products/{product}/kardex', [KardexController::class, 'index']);
         Route::get('/kardex/summary', [KardexController::class, 'summary']);
         Route::get('/kardex/export', [KardexController::class, 'export']);
+        Route::get('/products/{product}/batches', [\App\Http\Controllers\Api\BatchController::class, 'index']);
+        Route::get('/inventory/batches/expiring', [\App\Http\Controllers\Api\BatchController::class, 'expiring']);
+        Route::get('/inventory/reports/shrinkage', [\App\Http\Controllers\Api\InventoryReportController::class, 'shrinkage']);
+        Route::get('/inventory/reports/margin', [\App\Http\Controllers\Api\InventoryReportController::class, 'margin']);
     });
+    Route::post('/inventory/batches/{batch}/write-off', [\App\Http\Controllers\Api\BatchController::class, 'writeOff'])
+        ->middleware('permission:inventory.adjust|products.manage');
 
     // ========================
     // SERVICIOS (catálogo operativo canónico)

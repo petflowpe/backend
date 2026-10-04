@@ -18,6 +18,7 @@ use App\Services\FileService;
 use App\Services\PdfService;
 use App\Models\Product;
 use App\Models\StockMovement;
+use App\Services\BatchService;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -189,13 +190,15 @@ class DocumentService
     }
 
     /**
-     * Descuenta stock real (áreas + total + kardex) por los ítems PRODUCTO del comprobante.
-     * Los servicios no mueven inventario; sus insumos los descuenta AppointmentStockService.
+     * Descuenta stock real (áreas + total + kardex) por los ítems PRODUCTO del comprobante y los
+     * insumos de los SERVICIO vendidos directamente (source_type "<doc>_supply": son consumo,
+     * no se devuelven con nota de crédito ni baja). Las citas usan skip_stock y AppointmentStockService.
      */
     protected function deductStockForDocument(Invoice|Boleta $document, string $sourceType, string $label): void
     {
         $productService = app(ProductService::class);
         $userId = Auth::id();
+        $supplies = [];
 
         foreach ($document->detalles ?? [] as $detalle) {
             $productId = $detalle['product_id'] ?? null;
@@ -205,6 +208,16 @@ class DocumentService
             }
 
             $product = Product::where('company_id', $document->company_id)->find($productId);
+            if ($product && strtoupper((string) $product->item_type) === 'SERVICIO') {
+                foreach (app(AppointmentStockService::class)->requiredForMirror($product) as $req) {
+                    $supplyId = (int) ($req['product_id'] ?? 0);
+                    $supplyQty = (float) ($req['quantity'] ?? 0) * $qty;
+                    if ($supplyId > 0 && $supplyQty > 0) {
+                        $supplies[$supplyId] = ($supplies[$supplyId] ?? 0) + $supplyQty;
+                    }
+                }
+                continue;
+            }
             if (! $product || strtoupper((string) $product->item_type) !== 'PRODUCTO') {
                 continue;
             }
@@ -229,6 +242,33 @@ class DocumentService
                     'source_id' => $document->id,
                     'branch_id' => $document->branch_id,
                     'unit_cost' => (float) ($product->cost_price ?? 0),
+                    'created_by' => $userId,
+                ]
+            );
+        }
+
+        $supplySource = $sourceType . '_supply';
+        if ($supplies === [] || StockMovement::where('source_type', $supplySource)->where('source_id', $document->id)->exists()) {
+            return;
+        }
+
+        foreach ($supplies as $supplyId => $qty) {
+            $supply = Product::where('company_id', $document->company_id)->find($supplyId);
+            if (! $supply || strtoupper((string) $supply->item_type) !== 'PRODUCTO') {
+                continue;
+            }
+            $productService->adjustStock(
+                $supply,
+                null,
+                $qty,
+                'OUT',
+                'Insumos por servicio en ' . $label . ' ' . ($document->numero_completo ?? $document->id),
+                [
+                    'wrap_transaction' => false,
+                    'source_type' => $supplySource,
+                    'source_id' => $document->id,
+                    'branch_id' => $document->branch_id,
+                    'unit_cost' => (float) ($supply->cost_price ?? 0),
                     'created_by' => $userId,
                 ]
             );
@@ -1149,15 +1189,23 @@ class DocumentService
         int $restockSourceId,
         string $note
     ): void {
-        $sold = StockMovement::where('source_type', $sourceType)
-            ->where('source_id', $original->id)
+        // Productos vendidos en una cita (appointment_item): la NC los devuelve; la baja no, porque la
+        // cita se re-factura sin volver a descontar.
+        $appointmentId = $restockSourceType === 'credit_note' ? (int) ($original->appointment_id ?? 0) : 0;
+        $sold = StockMovement::where(function ($q) use ($sourceType, $original, $appointmentId) {
+            $q->where(fn ($q) => $q->where('source_type', $sourceType)->where('source_id', $original->id));
+            if ($appointmentId > 0) {
+                $q->orWhere(fn ($q) => $q->where('source_type', 'appointment_item')->where('source_id', $appointmentId));
+            }
+        })
             ->where('type', 'OUT')
-            ->get(['product_id', 'area_id', 'quantity', 'unit_cost'])
+            ->get(['id', 'product_id', 'area_id', 'quantity', 'unit_cost'])
             ->groupBy('product_id');
         if ($sold->isEmpty()) {
             return;
         }
 
+        $batchService = app(BatchService::class);
         $tipoDoc = $sourceType === 'invoice' ? '01' : '03';
         $noteIds = CreditNote::where('company_id', $original->company_id)
             ->where('tipo_doc_afectado', $tipoDoc)
@@ -1213,6 +1261,7 @@ class DocumentService
                         'branch_id' => $original->branch_id,
                         'unit_cost' => (float) ($areaOuts->first()->unit_cost ?? $product->cost_price ?? 0),
                         'created_by' => $userId,
+                        'restore_batches' => $batchService->consumedBatches($areaOuts->pluck('id')->all()),
                     ]
                 );
                 $remainingRequest -= $qty;

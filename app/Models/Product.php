@@ -35,6 +35,7 @@ class Product extends Model
         'stock',
         'min_stock',
         'max_stock',
+        'track_batches',
         'tax_affection',
         'igv_rate',
         'rating',
@@ -55,6 +56,7 @@ class Product extends Model
         'sold_count' => 'integer',
         'last_restocked_at' => 'date',
         'active' => 'boolean',
+        'track_batches' => 'boolean',
         'metadata' => 'array',
         'images' => 'array',
     ];
@@ -92,6 +94,11 @@ class Product extends Model
     public function productSale(): HasOne
     {
         return $this->hasOne(ProductSale::class);
+    }
+
+    public function batches(): HasMany
+    {
+        return $this->hasMany(ProductBatch::class);
     }
 
     public function stockMovements(): HasMany

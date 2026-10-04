@@ -273,6 +273,10 @@ class PurchaseOrderService
                             'source_id' => $order->id,
                             'unit_cost' => $unitCost,
                             'created_by' => $userId,
+                            'batch' => [
+                                'batch_number' => $line['batch_number'] ?? null,
+                                'expiry_date' => $line['expiry_date'] ?? null,
+                            ],
                         ]
                     );
                     $this->applyWeightedAverageCost($product, $toReceive, $unitCost);
@@ -395,6 +399,8 @@ class PurchaseOrderService
                                 'source_id' => $order->id,
                                 'unit_cost' => (float) $item->unit_cost,
                                 'created_by' => $userId,
+                                'consume_source' => ['purchase', $order->id],
+                                'allow_expired' => true,
                             ]
                         );
                     } catch (\InvalidArgumentException $e) {
