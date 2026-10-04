@@ -2,10 +2,14 @@
 
 namespace App\Http\Requests\Product;
 
+use App\Http\Requests\Concerns\ResolvesRequestCompanyId;
+use App\Support\CompanyExists;
 use Illuminate\Foundation\Http\FormRequest;
 
 class StoreProductRequest extends FormRequest
 {
+    use ResolvesRequestCompanyId;
+
     public function authorize(): bool
     {
         return true;
@@ -13,18 +17,20 @@ class StoreProductRequest extends FormRequest
 
     public function rules(): array
     {
+        $companyId = $this->requestCompanyId();
+
         return [
             'company_id' => ['required', 'integer', 'exists:companies,id'],
-            'category_id' => ['nullable', 'integer', 'exists:categories,id'],
-            'unit_id' => ['nullable', 'integer', 'exists:units,id'],
-            'brand_id' => ['nullable', 'integer', 'exists:brands,id'],
-            'supplier_id' => ['nullable', 'integer', 'exists:suppliers,id'],
+            'category_id' => ['nullable', 'integer', CompanyExists::in('categories', $companyId)],
+            'unit_id' => ['nullable', 'integer', CompanyExists::in('units', $companyId)],
+            'brand_id' => ['nullable', 'integer', CompanyExists::in('brands', $companyId)],
+            'supplier_id' => ['nullable', 'integer', CompanyExists::in('suppliers', $companyId)],
             'code' => ['nullable', 'string', 'max:50'],
             'name' => ['required', 'string', 'max:255'],
-            'brand' => ['nullable', 'string', 'max:100'], // Mantener para compatibilidad
+            'brand' => ['nullable', 'string', 'max:100'],
             'barcode' => ['nullable', 'string', 'max:50'],
             'description' => ['nullable', 'string'],
-            'supplier' => ['nullable', 'string', 'max:255'], // Mantener para compatibilidad
+            'supplier' => ['nullable', 'string', 'max:255'],
             'item_type' => ['nullable', 'string', 'in:PRODUCTO,SERVICIO'],
             'unit' => ['nullable', 'string', 'max:10'],
             'currency' => ['nullable', 'string', 'size:3'],
@@ -35,11 +41,9 @@ class StoreProductRequest extends FormRequest
             'stock' => ['nullable', 'numeric', 'min:0'],
             'min_stock' => ['nullable', 'numeric', 'min:0'],
             'max_stock' => ['nullable', 'numeric', 'min:0'],
-            'area_id' => ['nullable', 'integer', 'exists:areas,id'], // Para stock inicial
+            'area_id' => ['nullable', 'integer', CompanyExists::in('areas', $companyId)],
             'active' => ['nullable', 'boolean'],
             'metadata' => ['nullable', 'array'],
         ];
     }
 }
-
-

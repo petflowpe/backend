@@ -68,13 +68,11 @@ class PublicBookingController extends Controller
 
         if ($dbServices->isNotEmpty()) {
             $items = $dbServices->map(function (Service $service) {
-                $price = 0;
-                $duration = 60;
-                if (is_array($service->pricing) && !empty($service->pricing)) {
-                    $first = $service->pricing[0] ?? $service->pricing;
-                    $price = (float) ($first['price'] ?? $first['amount'] ?? 0);
-                    $duration = (int) ($first['duration'] ?? 60);
-                }
+                $rep = \App\Services\ServiceCatalogService::representativePricing(
+                    is_array($service->pricing) ? $service->pricing : null
+                );
+                $price = $rep['price'];
+                $duration = $rep['duration'];
 
                 $category = $service->category ?? 'MovilVet';
                 $serviceCategory = str_contains(strtolower($category), 'pelu') ? 'Peluquería' : 'MovilVet';
@@ -88,6 +86,8 @@ class PublicBookingController extends Controller
                     'service_category' => $serviceCategory,
                     'price' => $price,
                     'duration' => $duration,
+                    'pricing_by_size' => (bool) $service->pricing_by_size,
+                    'pricing' => $service->pricing,
                 ];
             })->values();
 

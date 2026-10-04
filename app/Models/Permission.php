@@ -196,6 +196,31 @@ class Permission extends Model
                 'kardex.view' => ['display_name' => 'Ver Kardex', 'description' => 'Consultar movimientos de inventario'],
             ],
 
+            // Catálogo de servicios
+            'services' => [
+                'services.view' => ['display_name' => 'Ver Servicios', 'description' => 'Consultar catálogo de servicios'],
+                'services.create' => ['display_name' => 'Crear Servicios', 'description' => 'Registrar servicios en el catálogo'],
+                'services.update' => ['display_name' => 'Editar Servicios', 'description' => 'Actualizar precios, insumos y datos de servicios'],
+                'services.delete' => ['display_name' => 'Desactivar Servicios', 'description' => 'Desactivar o reactivar servicios'],
+                'services.manage' => ['display_name' => 'Administrar Servicios', 'description' => 'Gestión completa del catálogo de servicios'],
+            ],
+
+            // Proveedores
+            'suppliers' => [
+                'suppliers.view' => ['display_name' => 'Ver Proveedores', 'description' => 'Consultar proveedores'],
+                'suppliers.manage' => ['display_name' => 'Administrar Proveedores', 'description' => 'Crear, editar y desactivar proveedores'],
+            ],
+
+            // Compras
+            'purchases' => [
+                'purchases.view' => ['display_name' => 'Ver Compras', 'description' => 'Consultar órdenes de compra y cuentas por pagar'],
+                'purchases.create' => ['display_name' => 'Crear Compras', 'description' => 'Crear y editar órdenes de compra'],
+                'purchases.approve' => ['display_name' => 'Aprobar Compras', 'description' => 'Aprobar o rechazar órdenes de compra'],
+                'purchases.receive' => ['display_name' => 'Recepcionar Compras', 'description' => 'Registrar recepción de mercadería (ingresa stock)'],
+                'purchases.pay' => ['display_name' => 'Pagar Compras', 'description' => 'Registrar pagos a proveedores'],
+                'purchases.manage' => ['display_name' => 'Administrar Compras', 'description' => 'Gestión completa de compras y su configuración'],
+            ],
+
             // Vehículos y cobertura
             'vehicles' => [
                 'vehicles.view' => ['display_name' => 'Ver Vehículos', 'description' => 'Ver flota y detalle de vehículos'],

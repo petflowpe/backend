@@ -19,6 +19,7 @@ use App\Services\AppointmentDocumentCorrectionService;
 use App\Services\AppointmentPaymentStatusService;
 use App\Services\AvailabilityService;
 use App\Services\PortalBookingService;
+use App\Services\ServiceCatalogService;
 use App\Services\VehicleCoverageService;
 use Illuminate\Support\Str;
 use Illuminate\Http\Request;
@@ -163,7 +164,7 @@ class AppointmentController extends Controller
                 'client_id' => 'required|integer|exists:clients,id',
                 'pet_id' => 'required|integer|exists:pets,id',
                 'company_id' => 'nullable|integer|exists:companies,id',
-                'service_id' => 'nullable|integer|exists:services,id',
+                'service_id' => 'nullable|integer',
                 'branch_id' => 'nullable|integer|exists:branches,id',
                 'vehicle_id' => 'nullable|integer|exists:vehicles,id',
                 'user_id' => 'nullable|integer|exists:users,id',
@@ -204,6 +205,29 @@ class AppointmentController extends Controller
             }
 
             $data = $validator->validated();
+            $catalog = app(ServiceCatalogService::class);
+            if (! empty($data['service_id'])) {
+                $resolvedServiceId = $catalog->resolveCanonicalServiceId((int) $data['service_id']);
+                if (! $resolvedServiceId) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'service_id no corresponde a un servicio válido',
+                    ], 422);
+                }
+                $data['service_id'] = $resolvedServiceId;
+            } else {
+                // Inferir desde el primer ítem SERVICIO
+                foreach ($request->input('items', []) as $item) {
+                    $type = strtoupper((string) ($item['item_type'] ?? ''));
+                    if (in_array($type, ['SERVICIO', 'SERVICE'], true) && ! empty($item['item_id'])) {
+                        $resolved = $catalog->resolveCanonicalServiceId((int) $item['item_id']);
+                        if ($resolved) {
+                            $data['service_id'] = $resolved;
+                            break;
+                        }
+                    }
+                }
+            }
             $data['company_id'] = $data['company_id'] ?? \App\Helpers\ScopeHelper::companyId($request) ?? $request->user()?->company_id;
             if (empty($data['company_id'])) {
                 return response()->json(['success' => false, 'message' => 'company_id es requerido o el usuario debe tener empresa asignada.'], 422);
@@ -390,7 +414,7 @@ class AppointmentController extends Controller
                         foreach ($items as $item) {
                             AppointmentItem::create([
                                 'appointment_id' => $appointment->id,
-                                'product_id' => $item['item_id'] ?? null,
+                                'product_id' => $this->resolveAppointmentItemProductId($item),
                                 'item_type' => $item['item_type'] ?? 'SERVICIO',
                                 'name' => $item['name'] ?? '',
                                 'quantity' => $item['quantity'] ?? 1,
@@ -560,7 +584,7 @@ class AppointmentController extends Controller
                 foreach ($items as $item) {
                     AppointmentItem::create([
                         'appointment_id' => $appointment->id,
-                        'product_id' => $item['item_id'] ?? null,
+                        'product_id' => $this->resolveAppointmentItemProductId($item),
                         'item_type' => $item['item_type'] ?? 'SERVICIO',
                         'name' => $item['name'] ?? '',
                         'quantity' => $item['quantity'] ?? 1,
@@ -1216,6 +1240,24 @@ class AppointmentController extends Controller
                 'message' => 'Error al registrar cobro: ' . $e->getMessage(),
             ], 500);
         }
+    }
+
+    /**
+     * Para ítems SERVICIO el frontend envía services.id; se guarda el product mirror.
+     */
+    private function resolveAppointmentItemProductId(array $item): ?int
+    {
+        $rawId = isset($item['item_id']) ? (int) $item['item_id'] : null;
+        if (! $rawId) {
+            return null;
+        }
+
+        $type = strtoupper((string) ($item['item_type'] ?? 'SERVICIO'));
+        if (in_array($type, ['SERVICIO', 'SERVICE'], true)) {
+            return app(ServiceCatalogService::class)->resolveProductMirrorId($rawId);
+        }
+
+        return $rawId;
     }
 
 }

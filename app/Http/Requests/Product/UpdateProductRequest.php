@@ -2,11 +2,15 @@
 
 namespace App\Http\Requests\Product;
 
+use App\Http\Requests\Concerns\ResolvesRequestCompanyId;
+use App\Support\CompanyExists;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
 class UpdateProductRequest extends FormRequest
 {
+    use ResolvesRequestCompanyId;
+
     public function authorize(): bool
     {
         return true;
@@ -16,28 +20,29 @@ class UpdateProductRequest extends FormRequest
     {
         $product = $this->route('product');
         $productId = is_object($product) ? $product->id : $product;
-        $companyId = is_object($product) ? $product->company_id : null;
+        $companyId = is_object($product) && $product->company_id
+            ? (int) $product->company_id
+            : $this->requestCompanyId();
 
         return [
-            'category_id' => ['nullable', 'integer', 'exists:categories,id'],
-            'unit_id' => ['nullable', 'integer', 'exists:units,id'],
-            'brand_id' => ['nullable', 'integer', 'exists:brands,id'],
-            'supplier_id' => ['nullable', 'integer', 'exists:suppliers,id'],
-            // Preferido para ajustes de stock (product_stocks); no es columna de products.
-            'area_id' => ['nullable', 'integer', 'exists:areas,id'],
+            'category_id' => ['nullable', 'integer', CompanyExists::in('categories', $companyId)],
+            'unit_id' => ['nullable', 'integer', CompanyExists::in('units', $companyId)],
+            'brand_id' => ['nullable', 'integer', CompanyExists::in('brands', $companyId)],
+            'supplier_id' => ['nullable', 'integer', CompanyExists::in('suppliers', $companyId)],
+            'area_id' => ['nullable', 'integer', CompanyExists::in('areas', $companyId)],
             'code' => [
                 'nullable',
                 'string',
                 'max:50',
                 Rule::unique('products', 'code')
-                    ->where(fn ($q) => $companyId ? $q->where('company_id', $companyId) : $q)
+                    ->where(fn ($q) => $companyId ? $q->where('company_id', $companyId) : $q->whereRaw('0 = 1'))
                     ->ignore($productId),
             ],
             'name' => ['sometimes', 'string', 'max:255'],
-            'brand' => ['nullable', 'string', 'max:100'], // Mantener para compatibilidad
+            'brand' => ['nullable', 'string', 'max:100'],
             'barcode' => ['nullable', 'string', 'max:50'],
             'description' => ['nullable', 'string'],
-            'supplier' => ['nullable', 'string', 'max:255'], // Mantener para compatibilidad
+            'supplier' => ['nullable', 'string', 'max:255'],
             'item_type' => ['nullable', 'string', 'in:PRODUCTO,SERVICIO'],
             'unit' => ['nullable', 'string', 'max:10'],
             'currency' => ['nullable', 'string', 'size:3'],
@@ -53,5 +58,3 @@ class UpdateProductRequest extends FormRequest
         ];
     }
 }
-
-

@@ -83,24 +83,35 @@ class PurchaseOrderController extends Controller
 
     public function store(Request $request): JsonResponse
     {
+        $companyId = (int) ($request->attributes->get('scope_company_id')
+            ?? $request->integer('company_id')
+            ?: ($request->user()?->company_id));
+
+        if ($companyId <= 0) {
+            return response()->json([
+                'success' => false,
+                'message' => 'company_id es requerido o el usuario debe tener empresa asignada.',
+            ], 422);
+        }
+
         $validated = $request->validate([
             'company_id' => 'nullable|integer|exists:companies,id',
-            'supplier_id' => 'required|integer|exists:suppliers,id',
+            'supplier_id' => ['required', 'integer', \App\Support\CompanyExists::in('suppliers', $companyId)],
             'order_date' => 'required|date',
             'delivery_date' => 'nullable|date',
             'notes' => 'nullable|string|max:1000',
-            'default_area_id' => 'nullable|integer',
+            'default_area_id' => ['nullable', 'integer', \App\Support\CompanyExists::in('areas', $companyId)],
             'igv_rate' => 'nullable|numeric|min:0|max:100',
             'prices_include_igv' => 'nullable|boolean',
             'items' => 'required|array|min:1',
-            'items.*.product_id' => 'required|integer|exists:products,id',
+            'items.*.product_id' => ['required', 'integer', \App\Support\CompanyExists::in('products', $companyId)],
             'items.*.quantity' => 'required|numeric|min:0.001',
             'items.*.unit_cost' => 'required|numeric|min:0',
         ]);
 
         try {
             DB::beginTransaction();
-            $companyId = (int) ($validated['company_id'] ?? \App\Helpers\ScopeHelper::companyId($request) ?? $request->user()?->company_id);
+            $companyId = (int) ($validated['company_id'] ?? $companyId);
             if (!$companyId) {
                 return response()->json(['message' => 'company_id es requerido o el usuario debe tener empresa asignada.'], 422);
             }
@@ -336,11 +347,12 @@ class PurchaseOrderController extends Controller
             ], 422);
         }
 
+        $companyId = (int) $purchase_order->company_id;
         $validated = $request->validate([
             'delivery_date' => 'nullable|date',
             'notes' => 'nullable|string|max:1000',
             'items' => 'required|array|min:1',
-            'items.*.product_id' => 'required|integer|exists:products,id',
+            'items.*.product_id' => ['required', 'integer', \App\Support\CompanyExists::in('products', $companyId)],
             'items.*.quantity' => 'required|numeric|min:0.001',
             'items.*.unit_cost' => 'required|numeric|min:0',
         ]);

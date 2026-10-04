@@ -617,7 +617,7 @@ class PurchaseOrderService
         return Product::query()
             ->where('company_id', $companyId)
             ->where(function ($q) use ($code) {
-                $q->where('code', $code)->orWhere('sku', $code);
+                $q->where('code', $code)->orWhere('barcode', $code);
             })
             ->first();
     }

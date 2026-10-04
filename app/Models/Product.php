@@ -19,11 +19,14 @@ class Product extends Model
         'category_id',
         'brand_id',
         'supplier_id',
-        'area_id',
+        'unit_id',
         'code',
-        'sku',
+        'barcode',
         'name',
+        'brand',
         'description',
+        'images',
+        'supplier',
         'item_type',
         'unit',
         'currency',
@@ -34,8 +37,9 @@ class Product extends Model
         'max_stock',
         'tax_affection',
         'igv_rate',
-        'isc_rate',
-        'icbper_rate',
+        'rating',
+        'sold_count',
+        'last_restocked_at',
         'active',
         'metadata',
     ];
@@ -130,6 +134,16 @@ class Product extends Model
     {
         return $query->whereColumn('stock', '<=', 'min_stock')
             ->whereNotNull('min_stock');
+    }
+
+    public function scopeProducts($query)
+    {
+        return $query->where('item_type', 'PRODUCTO');
+    }
+
+    public function scopeServices($query)
+    {
+        return $query->where('item_type', 'SERVICIO');
     }
 }
 

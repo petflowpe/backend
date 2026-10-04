@@ -168,7 +168,7 @@ class ExportReportService
             ->limit(self::MAX_ROWS)
             ->get()
             ->map(fn (Product $p) => [
-                'sku' => $p->sku ?? $p->code,
+                'sku' => $p->code,
                 'nombre' => $p->name,
                 'precio' => $p->unit_price,
                 'costo' => $p->cost_price,
@@ -502,7 +502,7 @@ class ExportReportService
                 $estado = $stock <= 0 ? 'CRÍTICO' : ($stock < $min ? 'BAJO' : 'OK');
 
                 return [
-                    'SKU' => $p->sku ?? $p->code,
+                    'SKU' => $p->code,
                     'Producto' => $p->name,
                     'Stock Actual' => $stock,
                     'Stock Mínimo' => $min,
@@ -522,7 +522,7 @@ class ExportReportService
             ->limit(self::MAX_ROWS)
             ->get()
             ->map(fn (Product $p) => [
-                'SKU' => $p->sku ?? $p->code,
+                'SKU' => $p->code,
                 'Producto' => $p->name,
                 'Stock Actual' => $p->stock,
                 'Stock Mínimo' => $p->min_stock,

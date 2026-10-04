@@ -217,10 +217,7 @@ class ProductService
             return (int) $fromStock;
         }
 
-        if ($product->area_id) {
-            return (int) $product->area_id;
-        }
-
+        // products no tiene columna area_id; la preferencia vive en metadata.
         $meta = is_array($product->metadata) ? $product->metadata : [];
         if (! empty($meta['preferred_area_id'])) {
             return (int) $meta['preferred_area_id'];
@@ -237,7 +234,9 @@ class ProductService
 
     public function getKPIs(int $companyId): array
     {
-        $products = Product::forCompany($companyId)->get();
+        $products = Product::forCompany($companyId)
+            ->where('item_type', 'PRODUCTO')
+            ->get();
 
         $totalProducts = $products->count();
         $activeProducts = $products->where('active', true)->count();

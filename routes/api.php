@@ -22,6 +22,7 @@ use App\Http\Controllers\Api\TreasuryController;
 use App\Http\Controllers\Api\ReportController;
 use App\Http\Controllers\Api\KardexController;
 use App\Http\Controllers\Api\ProductController;
+use App\Http\Controllers\Api\ServiceController;
 use App\Http\Controllers\Api\CashMovementController;
 use App\Http\Controllers\Api\OptimizationRecordController;
 use App\Http\Controllers\Api\CategoryController;
@@ -272,76 +273,132 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'throttle:api', EnsureUserCompa
     // PRODUCTOS / SERVICIOS (CATÁLOGO)
     // Rutas estáticas ANTES del apiResource para no capturar "low-stock" como {product}
     // ========================
+    // Lecturas abiertas dentro de la empresa: citas y facturación consumen el catálogo.
+    // "products.manage" se mantiene como respaldo para roles creados antes de estos permisos.
     Route::get('/products/low-stock', [ProductController::class, 'getLowStock']);
     Route::get('/companies/{company}/products/kpis', [ProductController::class, 'getKPIs']);
     Route::get('/companies/{company}/products', [ProductController::class, 'getByCompany']);
-    Route::apiResource('products', ProductController::class)->except(['destroy']);
-    Route::delete('/products/{product}', [ProductController::class, 'destroy']);
-    Route::post('/products/{product}/activate', [ProductController::class, 'activate']);
-    Route::post('/products/{product}/adjust-stock', [ProductController::class, 'adjustStock']);
-    Route::post('/products/{product}/image', [ProductController::class, 'uploadImage']);
-    Route::delete('/products/{product}/image', [ProductController::class, 'deleteImage']);
-    Route::get('/products/{product}/kardex', [KardexController::class, 'index']);
+    Route::get('/products', [ProductController::class, 'index']);
+    Route::get('/products/{product}', [ProductController::class, 'show']);
+    Route::post('/products', [ProductController::class, 'store'])
+        ->middleware('permission:products.create|products.manage');
+    Route::match(['put', 'patch'], '/products/{product}', [ProductController::class, 'update'])
+        ->middleware('permission:products.update|products.manage');
+    Route::post('/products/{product}/image', [ProductController::class, 'uploadImage'])
+        ->middleware('permission:products.update|products.manage');
+    Route::delete('/products/{product}/image', [ProductController::class, 'deleteImage'])
+        ->middleware('permission:products.update|products.manage');
+    Route::delete('/products/{product}', [ProductController::class, 'destroy'])
+        ->middleware('permission:products.delete|products.manage');
+    Route::post('/products/{product}/activate', [ProductController::class, 'activate'])
+        ->middleware('permission:products.delete|products.manage');
+    Route::post('/products/{product}/adjust-stock', [ProductController::class, 'adjustStock'])
+        ->middleware('permission:inventory.adjust|products.manage');
+    Route::get('/products/{product}/kardex', [KardexController::class, 'index'])
+        ->middleware('permission:kardex.view|products.view|products.manage');
 
     // ========================
-    // CATEGORÍAS DE PRODUCTOS
+    // SERVICIOS (catálogo operativo canónico)
     // ========================
-    Route::apiResource('categories', CategoryController::class);
-    Route::post('/categories/{category}/toggle-active', [CategoryController::class, 'toggleActive']);
+    Route::get('/services', [ServiceController::class, 'index']);
+    Route::get('/services/{service}', [ServiceController::class, 'show']);
+    Route::post('/services', [ServiceController::class, 'store'])
+        ->middleware('permission:services.create|services.manage|products.manage');
+    Route::match(['put', 'patch'], '/services/{service}', [ServiceController::class, 'update'])
+        ->middleware('permission:services.update|services.manage|products.manage');
+    Route::delete('/services/{service}', [ServiceController::class, 'destroy'])
+        ->middleware('permission:services.delete|services.manage|products.manage');
+    Route::post('/services/{service}/activate', [ServiceController::class, 'activate'])
+        ->middleware('permission:services.delete|services.manage|products.manage');
 
     // ========================
-    // UNIDADES DE MEDIDA
+    // MAESTROS DE CATÁLOGO (categorías, unidades, áreas, marcas)
     // ========================
-    Route::apiResource('units', UnitController::class);
-    Route::post('/units/{unit}/toggle-active', [UnitController::class, 'toggleActive']);
-
-    // ========================
-    // ÁREAS DE ALMACENAMIENTO
-    // ========================
-    Route::apiResource('areas', AreaController::class);
-    Route::post('/areas/{area}/toggle-active', [AreaController::class, 'toggleActive']);
-
-    // ========================
-    // MARCAS
-    // ========================
+    Route::get('/categories', [CategoryController::class, 'index']);
+    Route::get('/categories/{category}', [CategoryController::class, 'show']);
+    Route::get('/units', [UnitController::class, 'index']);
+    Route::get('/units/{unit}', [UnitController::class, 'show']);
+    Route::get('/areas', [AreaController::class, 'index']);
+    Route::get('/areas/{area}', [AreaController::class, 'show']);
     Route::get('/brands/kpis', [BrandController::class, 'getKPIs']);
-    Route::apiResource('brands', BrandController::class);
-    Route::post('/brands/{brand}/toggle-active', [BrandController::class, 'toggleActive']);
+    Route::get('/brands', [BrandController::class, 'index']);
+    Route::get('/brands/{brand}', [BrandController::class, 'show']);
+
+    Route::middleware('permission:products.update|products.manage|services.update|services.manage')->group(function () {
+        Route::post('/categories', [CategoryController::class, 'store']);
+        Route::match(['put', 'patch'], '/categories/{category}', [CategoryController::class, 'update']);
+        Route::delete('/categories/{category}', [CategoryController::class, 'destroy']);
+        Route::post('/categories/{category}/toggle-active', [CategoryController::class, 'toggleActive']);
+
+        Route::post('/units', [UnitController::class, 'store']);
+        Route::match(['put', 'patch'], '/units/{unit}', [UnitController::class, 'update']);
+        Route::delete('/units/{unit}', [UnitController::class, 'destroy']);
+        Route::post('/units/{unit}/toggle-active', [UnitController::class, 'toggleActive']);
+
+        Route::post('/areas', [AreaController::class, 'store']);
+        Route::match(['put', 'patch'], '/areas/{area}', [AreaController::class, 'update']);
+        Route::delete('/areas/{area}', [AreaController::class, 'destroy']);
+        Route::post('/areas/{area}/toggle-active', [AreaController::class, 'toggleActive']);
+
+        Route::post('/brands', [BrandController::class, 'store']);
+        Route::match(['put', 'patch'], '/brands/{brand}', [BrandController::class, 'update']);
+        Route::delete('/brands/{brand}', [BrandController::class, 'destroy']);
+        Route::post('/brands/{brand}/toggle-active', [BrandController::class, 'toggleActive']);
+    });
 
     // ========================
     // PROVEEDORES
     // ========================
-    Route::get('/suppliers/kpis', [SupplierController::class, 'getKPIs']);
-    Route::apiResource('suppliers', SupplierController::class);
-    Route::post('/suppliers/{supplier}/toggle-active', [SupplierController::class, 'toggleActive']);
+    Route::middleware('permission:suppliers.view|suppliers.manage|purchases.view|purchases.manage|products.manage')->group(function () {
+        Route::get('/suppliers/kpis', [SupplierController::class, 'getKPIs']);
+        Route::get('/suppliers', [SupplierController::class, 'index']);
+        Route::get('/suppliers/{supplier}', [SupplierController::class, 'show']);
+    });
+    Route::middleware('permission:suppliers.manage|products.manage')->group(function () {
+        Route::post('/suppliers', [SupplierController::class, 'store']);
+        Route::match(['put', 'patch'], '/suppliers/{supplier}', [SupplierController::class, 'update']);
+        Route::delete('/suppliers/{supplier}', [SupplierController::class, 'destroy']);
+        Route::post('/suppliers/{supplier}/toggle-active', [SupplierController::class, 'toggleActive']);
+    });
 
     // ========================
     // ÓRDENES DE COMPRA
     // ========================
-    Route::get('/purchase-orders', [PurchaseOrderController::class, 'index']);
-    Route::post('/purchase-orders', [PurchaseOrderController::class, 'store']);
-    Route::get('/purchase-orders/suggest-restock', [PurchaseOrderController::class, 'suggestRestock']);
-    Route::post('/purchase-orders/from-restock', [PurchaseOrderController::class, 'createFromRestock']);
-    Route::get('/purchase-orders/delivery-alerts', [PurchaseOrderController::class, 'deliveryAlerts']);
-    Route::get('/purchase-orders/price-history', [PurchaseOrderController::class, 'priceHistory']);
-    Route::get('/purchase-orders/payables', [PurchaseOrderController::class, 'payables']);
-    Route::match(['get', 'put', 'post'], '/purchase-orders/settings', [PurchaseOrderController::class, 'settings']);
-    Route::get('/purchase-orders/lookup-barcode', [PurchaseOrderController::class, 'lookupBarcode']);
-    Route::get('/purchase-orders/{purchase_order}/download-pdf', [PurchaseOrderController::class, 'downloadPdf']);
-    Route::post('/purchase-orders/{purchase_order}/invoice-attachment', [PurchaseOrderController::class, 'uploadInvoiceAttachment']);
-    Route::get('/purchase-orders/{purchase_order}/invoice-attachment', [PurchaseOrderController::class, 'downloadInvoiceAttachment']);
-    Route::delete('/purchase-orders/{purchase_order}/invoice-attachment', [PurchaseOrderController::class, 'deleteInvoiceAttachment']);
-    Route::get('/purchase-orders/{purchase_order}', [PurchaseOrderController::class, 'show']);
-    Route::put('/purchase-orders/{purchase_order}', [PurchaseOrderController::class, 'update']);
-    Route::delete('/purchase-orders/{purchase_order}', [PurchaseOrderController::class, 'destroy']);
-    Route::patch('/purchase-orders/{purchase_order}/status', [PurchaseOrderController::class, 'changeStatus']);
-    Route::post('/purchase-orders/{purchase_order}/receive', [PurchaseOrderController::class, 'receive']);
-    Route::post('/purchase-orders/{purchase_order}/complete', [PurchaseOrderController::class, 'complete']);
-    Route::post('/purchase-orders/{purchase_order}/pay', [PurchaseOrderController::class, 'pay']);
-    Route::post('/purchase-orders/{purchase_order}/cancel', [PurchaseOrderController::class, 'cancel']);
-    Route::post('/purchase-orders/{purchase_order}/approve', [PurchaseOrderController::class, 'approve']);
-    Route::post('/purchase-orders/{purchase_order}/reject', [PurchaseOrderController::class, 'reject']);
-    Route::post('/purchase-orders/{purchase_order}/email', [PurchaseOrderController::class, 'emailSupplier']);
+    Route::middleware('permission:purchases.view|purchases.manage|products.manage')->group(function () {
+        Route::get('/purchase-orders', [PurchaseOrderController::class, 'index']);
+        Route::get('/purchase-orders/suggest-restock', [PurchaseOrderController::class, 'suggestRestock']);
+        Route::get('/purchase-orders/delivery-alerts', [PurchaseOrderController::class, 'deliveryAlerts']);
+        Route::get('/purchase-orders/price-history', [PurchaseOrderController::class, 'priceHistory']);
+        Route::get('/purchase-orders/payables', [PurchaseOrderController::class, 'payables']);
+        Route::get('/purchase-orders/settings', [PurchaseOrderController::class, 'settings']);
+        Route::get('/purchase-orders/lookup-barcode', [PurchaseOrderController::class, 'lookupBarcode']);
+        Route::get('/purchase-orders/{purchase_order}/download-pdf', [PurchaseOrderController::class, 'downloadPdf']);
+        Route::get('/purchase-orders/{purchase_order}/invoice-attachment', [PurchaseOrderController::class, 'downloadInvoiceAttachment']);
+        Route::get('/purchase-orders/{purchase_order}', [PurchaseOrderController::class, 'show']);
+    });
+    Route::match(['put', 'post'], '/purchase-orders/settings', [PurchaseOrderController::class, 'settings'])
+        ->middleware('permission:purchases.manage|products.manage');
+    Route::middleware('permission:purchases.create|purchases.manage|products.manage')->group(function () {
+        Route::post('/purchase-orders', [PurchaseOrderController::class, 'store']);
+        Route::post('/purchase-orders/from-restock', [PurchaseOrderController::class, 'createFromRestock']);
+        Route::post('/purchase-orders/{purchase_order}/invoice-attachment', [PurchaseOrderController::class, 'uploadInvoiceAttachment']);
+        Route::delete('/purchase-orders/{purchase_order}/invoice-attachment', [PurchaseOrderController::class, 'deleteInvoiceAttachment']);
+        Route::put('/purchase-orders/{purchase_order}', [PurchaseOrderController::class, 'update']);
+        Route::delete('/purchase-orders/{purchase_order}', [PurchaseOrderController::class, 'destroy']);
+        Route::patch('/purchase-orders/{purchase_order}/status', [PurchaseOrderController::class, 'changeStatus']);
+        Route::post('/purchase-orders/{purchase_order}/cancel', [PurchaseOrderController::class, 'cancel']);
+        Route::post('/purchase-orders/{purchase_order}/email', [PurchaseOrderController::class, 'emailSupplier']);
+    });
+    Route::middleware('permission:purchases.receive|inventory.adjust|purchases.manage|products.manage')->group(function () {
+        Route::post('/purchase-orders/{purchase_order}/receive', [PurchaseOrderController::class, 'receive']);
+        Route::post('/purchase-orders/{purchase_order}/complete', [PurchaseOrderController::class, 'complete']);
+    });
+    Route::post('/purchase-orders/{purchase_order}/pay', [PurchaseOrderController::class, 'pay'])
+        ->middleware('permission:purchases.pay|purchases.manage|products.manage');
+    Route::middleware('permission:purchases.approve|purchases.manage|products.manage')->group(function () {
+        Route::post('/purchase-orders/{purchase_order}/approve', [PurchaseOrderController::class, 'approve']);
+        Route::post('/purchase-orders/{purchase_order}/reject', [PurchaseOrderController::class, 'reject']);
+    });
 
     // ========================
     // CORRELATIVOS

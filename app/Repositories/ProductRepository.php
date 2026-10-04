@@ -18,13 +18,21 @@ class ProductRepository
     {
         $query = Product::with(['company', 'category', 'unitRelation', 'brandRelation', 'supplierRelation', 'productSale']);
 
-        // Filtros
-        if (isset($filters['company_id'])) {
-            $query->where('company_id', $filters['company_id']);
+        $companyId = isset($filters['company_id']) ? (int) $filters['company_id'] : 0;
+        if ($companyId <= 0) {
+            // Evita listados cross-tenant cuando el caller olvida company_id
+            // (super_admin sin scope). Preferir error en el controlador.
+            $query->whereRaw('0 = 1');
+        } else {
+            $query->where('company_id', $companyId);
         }
 
         if (isset($filters['category_id'])) {
             $query->where('category_id', $filters['category_id']);
+        }
+
+        if (!empty($filters['item_type'])) {
+            $query->where('item_type', $filters['item_type']);
         }
 
         if (isset($filters['only_active'])) {
@@ -90,6 +98,7 @@ class ProductRepository
     public function getLowStockProducts(int $companyId): Collection
     {
         return Product::forCompany($companyId)
+            ->where('item_type', 'PRODUCTO')
             ->lowStock()
             ->with(['category', 'unitRelation'])
             ->get();
@@ -98,6 +107,7 @@ class ProductRepository
     public function getTopSellingProducts(int $companyId, int $limit = 10): Collection
     {
         return Product::forCompany($companyId)
+            ->where('item_type', 'PRODUCTO')
             ->whereHas('productSale')
             ->with(['productSale', 'category'])
             ->orderByDesc('sold_count')
@@ -108,6 +118,7 @@ class ProductRepository
     public function getBestMarginProducts(int $companyId, int $limit = 10): Collection
     {
         return Product::forCompany($companyId)
+            ->where('item_type', 'PRODUCTO')
             ->whereNotNull('cost_price')
             ->where('cost_price', '>', 0)
             ->with(['category', 'unitRelation'])

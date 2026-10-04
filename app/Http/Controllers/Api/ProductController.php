@@ -27,9 +27,12 @@ class ProductController extends Controller
     {
         try {
             $filters = [
-                'company_id' => $request->integer('company_id'),
+                'company_id' => $request->integer('company_id')
+                    ?: ($request->attributes->get('scope_company_id') ? (int) $request->attributes->get('scope_company_id') : null)
+                    ?: ($request->user()?->company_id),
                 'category_id' => $request->integer('category_id'),
                 'area_id' => $request->integer('area_id'),
+                'item_type' => $request->get('item_type'),
                 'only_active' => $request->boolean('only_active', false),
                 'low_stock' => $request->boolean('low_stock', false),
                 'search' => $request->get('search'),
@@ -38,7 +41,33 @@ class ProductController extends Controller
                 'per_page' => $request->integer('per_page', 15),
             ];
 
-            $products = $this->productService->list(array_filter($filters), $filters['per_page']);
+            if (!empty($filters['item_type']) && !in_array($filters['item_type'], ['PRODUCTO', 'SERVICIO'], true)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'item_type debe ser PRODUCTO o SERVICIO',
+                ], 422);
+            }
+
+            if (empty($filters['company_id'])) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'company_id es requerido',
+                ], 422);
+            }
+
+            // only_active / low_stock solo se envían cuando son true (evitar filtrar por false).
+            $listFilters = array_filter(
+                $filters,
+                function ($value, $key) {
+                    if (in_array($key, ['only_active', 'low_stock'], true)) {
+                        return $value === true;
+                    }
+                    return $value !== null && $value !== '' && $value !== false;
+                },
+                ARRAY_FILTER_USE_BOTH
+            );
+
+            $products = $this->productService->list($listFilters, $filters['per_page']);
 
             $response = [
                 'success' => true,

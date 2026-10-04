@@ -37,4 +37,24 @@ class Service extends Model
     {
         return $this->belongsTo(Company::class);
     }
+
+    public function appointments()
+    {
+        return $this->hasMany(Appointment::class);
+    }
+
+    public function products()
+    {
+        return $this->hasMany(Product::class, 'service_id');
+    }
+
+    public function scopeActive($query)
+    {
+        return $query->where('active', true);
+    }
+
+    public function scopeForCompany($query, int $companyId)
+    {
+        return $query->where('company_id', $companyId);
+    }
 }
