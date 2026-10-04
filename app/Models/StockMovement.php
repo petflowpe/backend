@@ -14,12 +14,14 @@ class StockMovement extends Model
     protected $fillable = [
         'company_id',
         'branch_id',
+        'area_id',
         'product_id',
         'movement_date',
         'type',
         'quantity',
         'unit_cost',
         'total_cost',
+        'balance_after',
         'source_type',
         'source_id',
         'notes',
@@ -31,7 +33,13 @@ class StockMovement extends Model
         'quantity' => 'decimal:3',
         'unit_cost' => 'decimal:2',
         'total_cost' => 'decimal:2',
+        'balance_after' => 'decimal:3',
     ];
+
+    public function area(): BelongsTo
+    {
+        return $this->belongsTo(Area::class);
+    }
 
     public function company(): BelongsTo
     {

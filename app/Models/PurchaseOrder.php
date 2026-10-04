@@ -95,6 +95,11 @@ class PurchaseOrder extends Model
         return $this->hasOne(PurchasePayable::class);
     }
 
+    public function payments(): HasMany
+    {
+        return $this->hasMany(PurchasePayment::class)->orderByDesc('paid_at')->orderByDesc('id');
+    }
+
     public function defaultArea(): BelongsTo
     {
         return $this->belongsTo(Area::class, 'default_area_id');

@@ -112,8 +112,9 @@ class DocumentService
                 'usuario_creacion' => $data['usuario_creacion'] ?? null,
             ]);
             
-            // Registrar movimientos de stock por cada detalle (si aplica)
-            $this->registerStockMovementsForInvoice($invoice);
+            if (empty($data['skip_stock'])) {
+                $this->deductStockForDocument($invoice, 'invoice', 'factura');
+            }
 
             return $invoice;
         });
@@ -179,96 +180,58 @@ class DocumentService
                 'usuario_creacion' => $data['usuario_creacion'] ?? null,
             ]);
             
-            // Registrar movimientos de stock por cada detalle (si aplica)
-            $this->registerStockMovementsForBoleta($boleta);
+            if (empty($data['skip_stock'])) {
+                $this->deductStockForDocument($boleta, 'boleta', 'boleta');
+            }
 
             return $boleta;
         });
     }
 
     /**
-     * Registrar movimientos de stock para una factura.
+     * Descuenta stock real (áreas + total + kardex) por los ítems PRODUCTO del comprobante.
+     * Los servicios no mueven inventario; sus insumos los descuenta AppointmentStockService.
      */
-    protected function registerStockMovementsForInvoice(Invoice $invoice): void
+    protected function deductStockForDocument(Invoice|Boleta $document, string $sourceType, string $label): void
     {
-        $detalles = $invoice->detalles ?? [];
+        $productService = app(ProductService::class);
         $userId = Auth::id();
 
-        foreach ($detalles as $detalle) {
-            if (empty($detalle['product_id'] ?? null)) {
-                continue;
-            }
-
-            $product = Product::find($detalle['product_id']);
-            if (!$product) {
-                continue;
-            }
-
+        foreach ($document->detalles ?? [] as $detalle) {
+            $productId = $detalle['product_id'] ?? null;
             $qty = (float) ($detalle['cantidad'] ?? 0);
-            if ($qty <= 0) {
+            if (! $productId || $qty <= 0) {
                 continue;
             }
 
-            $unitCost = (float) ($detalle['unit_cost'] ?? 0);
-            $totalCost = $unitCost * $qty;
-
-            StockMovement::create([
-                'company_id' => $invoice->company_id,
-                'branch_id' => $invoice->branch_id,
-                'product_id' => $product->id,
-                'movement_date' => $invoice->fecha_emision ?? now(),
-                'type' => 'OUT',
-                'quantity' => $qty,
-                'unit_cost' => $unitCost ?: null,
-                'total_cost' => $unitCost ? $totalCost : null,
-                'source_type' => 'invoice',
-                'source_id' => $invoice->id,
-                'notes' => 'Salida por factura ' . ($invoice->numero_completo ?? $invoice->id),
-                'created_by' => $userId,
-            ]);
-        }
-    }
-
-    /**
-     * Registrar movimientos de stock para una boleta.
-     */
-    protected function registerStockMovementsForBoleta(Boleta $boleta): void
-    {
-        $detalles = $boleta->detalles ?? [];
-        $userId = Auth::id();
-
-        foreach ($detalles as $detalle) {
-            if (empty($detalle['product_id'] ?? null)) {
+            $product = Product::where('company_id', $document->company_id)->find($productId);
+            if (! $product || strtoupper((string) $product->item_type) !== 'PRODUCTO') {
                 continue;
             }
 
-            $product = Product::find($detalle['product_id']);
-            if (!$product) {
+            $already = StockMovement::where('source_type', $sourceType)
+                ->where('source_id', $document->id)
+                ->where('product_id', $product->id)
+                ->exists();
+            if ($already) {
                 continue;
             }
 
-            $qty = (float) ($detalle['cantidad'] ?? 0);
-            if ($qty <= 0) {
-                continue;
-            }
-
-            $unitCost = (float) ($detalle['unit_cost'] ?? 0);
-            $totalCost = $unitCost * $qty;
-
-            StockMovement::create([
-                'company_id' => $boleta->company_id,
-                'branch_id' => $boleta->branch_id,
-                'product_id' => $product->id,
-                'movement_date' => $boleta->fecha_emision ?? now(),
-                'type' => 'OUT',
-                'quantity' => $qty,
-                'unit_cost' => $unitCost ?: null,
-                'total_cost' => $unitCost ? $totalCost : null,
-                'source_type' => 'invoice',
-                'source_id' => $boleta->id,
-                'notes' => 'Salida por boleta ' . ($boleta->numero_completo ?? $boleta->id),
-                'created_by' => $userId,
-            ]);
+            $productService->adjustStock(
+                $product,
+                null,
+                $qty,
+                'OUT',
+                'Salida por ' . $label . ' ' . ($document->numero_completo ?? $document->id),
+                [
+                    'wrap_transaction' => false,
+                    'source_type' => $sourceType,
+                    'source_id' => $document->id,
+                    'branch_id' => $document->branch_id,
+                    'unit_cost' => (float) ($product->cost_price ?? 0),
+                    'created_by' => $userId,
+                ]
+            );
         }
     }
 
@@ -1087,9 +1050,202 @@ class DocumentService
                 'estado_sunat' => 'PENDIENTE',
                 'usuario_creacion' => $data['usuario_creacion'] ?? null,
             ]);
-            
+
+            if (empty($data['skip_stock'])) {
+                $this->returnStockForCreditNote($creditNote);
+            }
+
             return $creditNote;
         });
+    }
+
+    /**
+     * Devuelve al almacén lo que el comprobante afectado descontó (motivos SUNAT de anulación/devolución).
+     * Solo repone salidas registradas por el propio comprobante (source invoice/boleta), nunca más de lo descontado.
+     */
+    protected function returnStockForCreditNote(CreditNote $creditNote): void
+    {
+        $fullReturn = in_array($creditNote->cod_motivo, ['01', '02', '06'], true);
+        $itemReturn = $creditNote->cod_motivo === '07';
+        if (! $fullReturn && ! $itemReturn) {
+            return;
+        }
+
+        $sourceType = match ($creditNote->tipo_doc_afectado) {
+            '01' => 'invoice',
+            '03' => 'boleta',
+            default => null,
+        };
+        if (! $sourceType) {
+            return;
+        }
+
+        $model = $sourceType === 'invoice' ? Invoice::class : Boleta::class;
+        $original = $model::where('company_id', $creditNote->company_id)
+            ->where('numero_completo', $creditNote->num_doc_afectado)
+            ->first();
+        if (! $original) {
+            return;
+        }
+
+        $this->restockSoldItems(
+            $original,
+            $sourceType,
+            $itemReturn ? $this->creditNoteQuantitiesByProduct($creditNote, $original) : null,
+            'credit_note',
+            $creditNote->id,
+            'Devolución por NC ' . ($creditNote->numero_completo ?? $creditNote->serie . '-' . $creditNote->correlativo)
+                . ' (' . $creditNote->num_doc_afectado . ')'
+        );
+    }
+
+    /**
+     * Repone al almacén las salidas que registró una comunicación de baja aceptada por SUNAT.
+     */
+    protected function returnStockForVoidedDocument(VoidedDocument $voided): void
+    {
+        foreach ($voided->detalles ?? [] as $line) {
+            $tipo = (string) ($line['tipo_documento'] ?? '');
+            $sourceType = match ($tipo) {
+                '01' => 'invoice',
+                '03' => 'boleta',
+                default => null,
+            };
+            if (! $sourceType || empty($line['serie']) || ! isset($line['correlativo'])) {
+                continue;
+            }
+
+            $model = $sourceType === 'invoice' ? Invoice::class : Boleta::class;
+            $original = $model::where('company_id', $voided->company_id)
+                ->where('serie', $line['serie'])
+                ->where('correlativo', $line['correlativo'])
+                ->first();
+            if (! $original) {
+                continue;
+            }
+
+            $this->restockSoldItems(
+                $original,
+                $sourceType,
+                null,
+                'voided_' . $sourceType,
+                $original->id,
+                'Devolución por baja ' . ($voided->identificador ?? ('RA #' . $voided->id)) . ' (' . $original->numero_completo . ')'
+            );
+        }
+    }
+
+    /**
+     * Repone las salidas que registró un comprobante, sin superar lo ya devuelto antes
+     * (notas de crédito previas o una baja) y respetando el almacén de cada salida.
+     *
+     * @param  array<int, float>|null  $requested  cantidades por producto; null = todo lo pendiente
+     */
+    private function restockSoldItems(
+        Invoice|Boleta $original,
+        string $sourceType,
+        ?array $requested,
+        string $restockSourceType,
+        int $restockSourceId,
+        string $note
+    ): void {
+        $sold = StockMovement::where('source_type', $sourceType)
+            ->where('source_id', $original->id)
+            ->where('type', 'OUT')
+            ->get(['product_id', 'area_id', 'quantity', 'unit_cost'])
+            ->groupBy('product_id');
+        if ($sold->isEmpty()) {
+            return;
+        }
+
+        $tipoDoc = $sourceType === 'invoice' ? '01' : '03';
+        $noteIds = CreditNote::where('company_id', $original->company_id)
+            ->where('tipo_doc_afectado', $tipoDoc)
+            ->where('num_doc_afectado', $original->numero_completo)
+            ->pluck('id');
+        $alreadyReturned = StockMovement::where(function ($q) use ($noteIds, $sourceType, $original) {
+            $q->where(fn ($q) => $q->where('source_type', 'credit_note')->whereIn('source_id', $noteIds))
+                ->orWhere(fn ($q) => $q->where('source_type', 'voided_' . $sourceType)->where('source_id', $original->id));
+        })
+            ->where('type', 'IN')
+            ->when($restockSourceType === 'credit_note', fn ($q) => $q->where(
+                fn ($q) => $q->where('source_type', '!=', 'credit_note')->orWhere('source_id', '!=', $restockSourceId)
+            ))
+            ->selectRaw('product_id, area_id, SUM(ABS(quantity)) as qty')
+            ->groupBy('product_id', 'area_id')
+            ->get()
+            ->groupBy('product_id');
+
+        $productService = app(ProductService::class);
+        $userId = Auth::id();
+
+        foreach ($sold as $productId => $outs) {
+            $product = Product::where('company_id', $original->company_id)->find($productId);
+            if (! $product) {
+                continue;
+            }
+
+            $remainingRequest = $requested === null ? INF : (float) ($requested[$productId] ?? 0);
+            if ($remainingRequest <= 0) {
+                continue;
+            }
+
+            $returnedByArea = collect($alreadyReturned[$productId] ?? [])
+                ->mapWithKeys(fn ($r) => [(int) $r->area_id => (float) $r->qty]);
+
+            foreach ($outs->groupBy(fn ($m) => (int) $m->area_id) as $areaId => $areaOuts) {
+                $available = $areaOuts->sum(fn ($m) => abs((float) $m->quantity)) - (float) ($returnedByArea[$areaId] ?? 0);
+                $qty = min($available, $remainingRequest);
+                if ($qty <= 0.0005) {
+                    continue;
+                }
+
+                $productService->adjustStock(
+                    $product,
+                    $areaId ?: null,
+                    $qty,
+                    'IN',
+                    $note,
+                    [
+                        'wrap_transaction' => false,
+                        'source_type' => $restockSourceType,
+                        'source_id' => $restockSourceId,
+                        'branch_id' => $original->branch_id,
+                        'unit_cost' => (float) ($areaOuts->first()->unit_cost ?? $product->cost_price ?? 0),
+                        'created_by' => $userId,
+                    ]
+                );
+                $remainingRequest -= $qty;
+            }
+        }
+    }
+
+    /**
+     * Cantidades por producto de una NC por ítem, enlazando cada línea con el producto
+     * por product_id o, si no viene, por el código de la línea del comprobante original.
+     *
+     * @return array<int, float>
+     */
+    private function creditNoteQuantitiesByProduct(CreditNote $creditNote, Invoice|Boleta $original): array
+    {
+        $productByCode = [];
+        foreach ($original->detalles ?? [] as $line) {
+            if (! empty($line['product_id']) && ! empty($line['codigo'])) {
+                $productByCode[(string) $line['codigo']] = (int) $line['product_id'];
+            }
+        }
+
+        $result = [];
+        foreach ($creditNote->detalles ?? [] as $line) {
+            $productId = ! empty($line['product_id'])
+                ? (int) $line['product_id']
+                : ($productByCode[(string) ($line['codigo'] ?? '')] ?? null);
+            if ($productId) {
+                $result[$productId] = ($result[$productId] ?? 0) + (float) ($line['cantidad'] ?? 0);
+            }
+        }
+
+        return $result;
     }
 
     public function createDebitNote(array $data): DebitNote
@@ -2149,6 +2305,17 @@ class DocumentService
                     ]) : null,
                     'cdr_path' => $voidedDocument->cdr_path
                 ]);
+
+                if ($estado === 'ACEPTADO') {
+                    try {
+                        DB::transaction(fn () => $this->returnStockForVoidedDocument($voidedDocument));
+                    } catch (Exception $e) {
+                        Log::error('No se pudo reponer stock por comunicación de baja', [
+                            'voided_document_id' => $voidedDocument->id,
+                            'error' => $e->getMessage(),
+                        ]);
+                    }
+                }
                 
                 return [
                     'success' => true,

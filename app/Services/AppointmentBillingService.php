@@ -67,6 +67,8 @@ class AppointmentBillingService
         $this->stockService->assertStockAvailable($appointment);
 
         $payload = $this->buildDocumentPayload($appointment, $tipo, $options['serie'] ?? null, $options);
+        // El stock de citas (insumos + ítems PRODUCTO) lo descuenta deductOnInvoice.
+        $payload['skip_stock'] = true;
         $sendSunat = (bool) ($options['send_to_sunat'] ?? false);
 
         if ($tipo === '01') {

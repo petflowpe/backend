@@ -10,6 +10,8 @@ use App\Models\Product;
 use App\Models\PurchaseOrder;
 use App\Models\PurchaseOrderItem;
 use App\Models\PurchasePayable;
+use App\Models\PurchasePayment;
+use App\Models\StockMovement;
 use App\Models\SupplierProductPriceHistory;
 use Exception;
 use Illuminate\Support\Collection;
@@ -360,7 +362,14 @@ class PurchaseOrderService
         }
 
         return DB::transaction(function () use ($order, $reason, $userId) {
-            $order->loadMissing('items.product');
+            $order = PurchaseOrder::whereKey($order->id)->lockForUpdate()->firstOrFail();
+            if ((float) ($order->amount_paid ?? 0) > 0.009) {
+                throw new Exception(
+                    'La orden tiene pagos registrados (S/ ' . number_format((float) $order->amount_paid, 2)
+                    . '). Registre primero la devolución del proveedor o una nota de crédito antes de anular.'
+                );
+            }
+            $order->load('items.product');
 
             foreach ($order->items as $item) {
                 $received = (float) ($item->quantity_received ?? 0);
@@ -371,20 +380,29 @@ class PurchaseOrderService
                 if (! $product) {
                     continue;
                 }
-                $this->productService->adjustStock(
-                    $product,
-                    $order->default_area_id ? (int) $order->default_area_id : null,
-                    $received,
-                    'OUT',
-                    'Reverso por anulación OC ' . ($order->order_number ?? '#' . $order->id) . ': ' . $reason,
-                    [
-                        'wrap_transaction' => false,
-                        'source_type' => 'purchase_cancel',
-                        'source_id' => $order->id,
-                        'unit_cost' => (float) $item->unit_cost,
-                        'created_by' => $userId,
-                    ]
-                );
+
+                foreach ($this->receivedByArea($order, $product->id, $received) as $areaId => $qty) {
+                    try {
+                        $this->productService->adjustStock(
+                            $product,
+                            $areaId ?: null,
+                            $qty,
+                            'OUT',
+                            'Reverso por anulación OC ' . ($order->order_number ?? '#' . $order->id) . ': ' . $reason,
+                            [
+                                'wrap_transaction' => false,
+                                'source_type' => 'purchase_cancel',
+                                'source_id' => $order->id,
+                                'unit_cost' => (float) $item->unit_cost,
+                                'created_by' => $userId,
+                            ]
+                        );
+                    } catch (\InvalidArgumentException $e) {
+                        throw new Exception(
+                            "No se puede anular la OC por \"{$product->name}\": {$e->getMessage()}"
+                        );
+                    }
+                }
                 $item->update(['quantity_received' => 0]);
             }
 
@@ -402,6 +420,32 @@ class PurchaseOrderService
 
             return $order->fresh(['supplier', 'items.product']);
         });
+    }
+
+    /**
+     * Cantidad neta recibida por almacén según el kardex de la OC.
+     * Movimientos antiguos sin area_id se atribuyen al almacén por defecto de la orden.
+     *
+     * @return array<int, float> area_id => cantidad
+     */
+    private function receivedByArea(PurchaseOrder $order, int $productId, float $received): array
+    {
+        $fallbackArea = (int) ($order->default_area_id ?? 0);
+
+        $byArea = StockMovement::where('source_id', $order->id)
+            ->where('product_id', $productId)
+            ->whereIn('source_type', ['purchase', 'purchase_cancel'])
+            ->get(['area_id', 'type', 'quantity'])
+            ->groupBy(fn ($m) => (int) ($m->area_id ?: $fallbackArea))
+            ->map(fn ($rows) => $rows->sum(fn ($m) => strtoupper($m->type) === 'OUT' ? -abs((float) $m->quantity) : abs((float) $m->quantity)))
+            ->filter(fn ($qty) => $qty > 0.0005)
+            ->all();
+
+        if ($byArea === []) {
+            return [$fallbackArea => $received];
+        }
+
+        return $byArea;
     }
 
     public function approve(PurchaseOrder $order, ?int $userId = null, ?string $notes = null): PurchaseOrder
@@ -447,45 +491,49 @@ class PurchaseOrderService
             throw new Exception('El monto de pago debe ser mayor a 0');
         }
 
-        $total = (float) ($order->invoice_total ?? $order->total);
-        $paid = (float) ($order->amount_paid ?? 0);
-        $remaining = max(0, $total - $paid);
-        if ($amount > $remaining + 0.01) {
-            throw new Exception('El monto excede el saldo pendiente (S/ ' . number_format($remaining, 2) . ')');
+        $method = (string) ($options['payment_method'] ?? 'cash');
+        $postToCash = ! empty($options['post_to_cash']);
+        if ($postToCash && $method !== 'cash') {
+            throw new Exception('Solo los pagos en efectivo se registran como egreso de caja');
         }
 
-        return DB::transaction(function () use ($order, $amount, $options, $userId, $total, $paid) {
-            $newPaid = $paid + $amount;
+        return DB::transaction(function () use ($order, $amount, $options, $userId, $method, $postToCash) {
+            /** @var PurchaseOrder $order */
+            $order = PurchaseOrder::whereKey($order->id)->lockForUpdate()->firstOrFail();
+
+            if ($order->status === 'cancelled') {
+                throw new Exception('No se puede pagar una orden anulada');
+            }
+
+            $total = (float) ($order->invoice_total ?? $order->total);
+            $paid = (float) ($order->amount_paid ?? 0);
+            $remaining = max(0, $total - $paid);
+            if ($amount > $remaining + 0.01) {
+                throw new Exception('El monto excede el saldo pendiente (S/ ' . number_format($remaining, 2) . ')');
+            }
+
+            $newPaid = min($total, $paid + $amount);
             $status = $newPaid + 0.01 >= $total ? 'paid' : 'partial';
+            $reference = $options['reference'] ?? null;
+            $label = $order->order_number ?? ('#' . $order->id);
 
-            $order->update([
-                'amount_paid' => $newPaid,
-                'payment_status' => $status,
-                'paid_at' => $status === 'paid' ? now() : $order->paid_at,
-            ]);
-
-            if (! empty($options['post_to_cash'])) {
-                $session = CashSession::query()
-                    ->where('company_id', $order->company_id)
-                    ->where('status', 'OPEN')
-                    ->when(! empty($options['cash_session_id']), fn ($q) => $q->where('id', $options['cash_session_id']))
-                    ->orderByDesc('id')
-                    ->first();
-
+            $cashMovement = null;
+            if ($postToCash) {
+                $session = $this->resolveOpenCashSession((int) $order->company_id, $userId, $options['cash_session_id'] ?? null);
                 if (! $session) {
                     throw new Exception('No hay caja abierta para registrar el egreso');
                 }
 
-                CashMovement::create([
+                $cashMovement = CashMovement::create([
                     'company_id' => $order->company_id,
                     'branch_id' => $session->branch_id,
                     'user_id' => $userId,
                     'cash_session_id' => $session->id,
                     'type' => 'EXPENSE',
                     'amount' => $amount,
-                    'description' => 'Pago proveedor OC ' . ($order->order_number ?? '#' . $order->id),
-                    'payment_method' => $options['payment_method'] ?? 'cash',
-                    'reference' => $order->order_number ?? ('PO-' . $order->id),
+                    'description' => 'Pago proveedor OC ' . $label,
+                    'payment_method' => $method,
+                    'reference' => $reference ?: ($order->order_number ?? ('PO-' . $order->id)),
                     'movement_date' => now(),
                     'metadata' => [
                         'purchase_order_id' => $order->id,
@@ -494,10 +542,55 @@ class PurchaseOrderService
                 ]);
             }
 
+            PurchasePayment::create([
+                'company_id' => $order->company_id,
+                'purchase_order_id' => $order->id,
+                'supplier_id' => $order->supplier_id,
+                'amount' => $amount,
+                'payment_method' => $method,
+                'reference' => $reference,
+                'notes' => $options['notes'] ?? null,
+                'paid_at' => now(),
+                'cash_movement_id' => $cashMovement?->id,
+                'user_id' => $userId,
+            ]);
+
+            $order->update([
+                'amount_paid' => $newPaid,
+                'payment_status' => $status,
+                'paid_at' => $status === 'paid' ? now() : $order->paid_at,
+            ]);
+
             $this->syncPayable($order->fresh());
 
-            return $order->fresh(['supplier', 'items.product', 'payable']);
+            return $order->fresh(['supplier', 'items.product', 'payable', 'payments.user:id,name']);
         });
+    }
+
+    /**
+     * Caja abierta para el egreso: la indicada, luego la del usuario y por último la más reciente de la empresa.
+     */
+    private function resolveOpenCashSession(int $companyId, ?int $userId, $cashSessionId = null): ?CashSession
+    {
+        $open = fn () => CashSession::query()->where('company_id', $companyId)->where('status', 'OPEN');
+
+        if ($cashSessionId) {
+            $session = $open()->whereKey((int) $cashSessionId)->first();
+            if (! $session) {
+                throw new Exception('La caja indicada no está abierta');
+            }
+
+            return $session;
+        }
+
+        if ($userId) {
+            $session = $open()->where('user_id', $userId)->orderByDesc('id')->first();
+            if ($session) {
+                return $session;
+            }
+        }
+
+        return $open()->orderByDesc('id')->first();
     }
 
     public function syncPayable(PurchaseOrder $order): PurchasePayable
@@ -507,6 +600,14 @@ class PurchaseOrderService
         $paid = (float) ($order->amount_paid ?? 0);
         $balance = max(0, $original - $paid);
         $status = $balance <= 0.01 ? 'closed' : ($paid > 0 ? 'partial' : 'open');
+
+        $paymentStatus = $paid <= 0.009 ? 'unpaid' : ($balance <= 0.01 ? 'paid' : 'partial');
+        if ($order->payment_status !== $paymentStatus) {
+            $order->forceFill([
+                'payment_status' => $paymentStatus,
+                'paid_at' => $paymentStatus === 'paid' ? ($order->paid_at ?? now()) : null,
+            ])->saveQuietly();
+        }
 
         $creditDays = (int) ($order->supplier?->credit_days ?? 0);
         $due = $order->invoice_date

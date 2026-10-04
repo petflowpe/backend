@@ -37,29 +37,18 @@ class ProductService
             $areaId = isset($data['area_id']) ? (int) $data['area_id'] : null;
             unset($data['area_id']);
 
+            // El stock solo entra por adjustStock para que áreas, total y kardex cuadren.
+            $initialStock = (float) ($data['stock'] ?? 0);
+            $data['stock'] = 0;
+
             $product = $this->repository->create($data);
 
-            // Crear stock inicial si se proporciona área
-            if ($areaId && isset($data['stock'])) {
-                ProductStock::create([
-                    'product_id' => $product->id,
-                    'area_id' => $areaId,
-                    'quantity' => $data['stock'],
-                    'min_stock' => $data['min_stock'] ?? null,
-                    'max_stock' => $data['max_stock'] ?? null,
-                ]);
-
-                // Registrar movimiento inicial
-                StockMovement::create([
-                    'company_id' => $product->company_id,
-                    'product_id' => $product->id,
-                    'movement_date' => now(),
-                    'type' => 'IN',
-                    'quantity' => $data['stock'],
-                    'unit_cost' => $data['cost_price'] ?? 0,
-                    'total_cost' => ($data['cost_price'] ?? 0) * $data['stock'],
+            $isPhysical = strtoupper((string) ($product->item_type ?? 'PRODUCTO')) === 'PRODUCTO';
+            if ($isPhysical && $initialStock > 0) {
+                $this->adjustStock($product, $areaId, $initialStock, 'IN', 'Stock inicial', [
+                    'wrap_transaction' => false,
                     'source_type' => 'initial',
-                    'notes' => 'Stock inicial',
+                    'unit_cost' => (float) ($data['cost_price'] ?? 0),
                 ]);
             }
 
@@ -74,6 +63,9 @@ class ProductService
 
     public function update(Product $product, array $data): Product
     {
+        // Cambios de stock solo por /adjust-stock (kardex); editar ficha no toca saldos.
+        unset($data['stock']);
+
         DB::beginTransaction();
         try {
             // products no tiene columna area_id: preferencia de almacén va en metadata
@@ -151,6 +143,7 @@ class ProductService
 
             if ($type === 'IN') {
                 $productStock->quantity = $oldQuantity + $quantity;
+                $movementQty = abs($quantity);
             } elseif ($type === 'OUT') {
                 if ($oldQuantity < $quantity) {
                     throw new \InvalidArgumentException(
@@ -158,14 +151,24 @@ class ProductService
                     );
                 }
                 $productStock->quantity = $oldQuantity - $quantity;
+                $movementQty = abs($quantity);
             } else {
+                if ($quantity < 0) {
+                    throw new \InvalidArgumentException('El stock ajustado no puede ser negativo.');
+                }
+                // ADJUST fija el saldo del área; el kardex guarda la diferencia con signo.
                 $productStock->quantity = $quantity;
+                $movementQty = $quantity - $oldQuantity;
             }
 
             $productStock->save();
 
-            $totalStock = ProductStock::where('product_id', $product->id)->sum('quantity');
+            $totalStock = (float) ProductStock::where('product_id', $product->id)->sum('quantity');
             $product->update(['stock' => $totalStock]);
+
+            if ($type === 'ADJUST' && abs($movementQty) < 0.0005) {
+                return $productStock->fresh();
+            }
 
             $unitCost = isset($options['unit_cost'])
                 ? (float) $options['unit_cost']
@@ -174,12 +177,14 @@ class ProductService
             StockMovement::create([
                 'company_id' => $product->company_id,
                 'branch_id' => $options['branch_id'] ?? null,
+                'area_id' => $resolvedAreaId,
                 'product_id' => $product->id,
-                'movement_date' => now(),
+                'movement_date' => $options['movement_date'] ?? now(),
                 'type' => $type,
-                'quantity' => abs($quantity),
+                'quantity' => $movementQty,
                 'unit_cost' => $unitCost,
-                'total_cost' => $unitCost * abs($quantity),
+                'total_cost' => $unitCost * $movementQty,
+                'balance_after' => $totalStock,
                 'source_type' => $options['source_type'] ?? 'adjustment',
                 'source_id' => $options['source_id'] ?? null,
                 'notes' => $notes ?? "Ajuste de stock: {$oldQuantity} -> {$productStock->quantity}",

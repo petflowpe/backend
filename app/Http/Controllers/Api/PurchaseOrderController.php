@@ -25,9 +25,10 @@ class PurchaseOrderController extends Controller
     public function index(Request $request): JsonResponse
     {
         try {
-            $companyId = $request->attributes->get('scope_company_id')
-                ?? $request->integer('company_id')
-                ?: ($request->user()?->company_id);
+            $companyId = $this->companyId($request);
+            if (! $companyId) {
+                return response()->json(['success' => false, 'message' => 'company_id requerido'], 422);
+            }
             $query = PurchaseOrder::with(['supplier:id,name,company_id', 'items.product:id,name,code,stock'])
                 ->byCompany($companyId)
                 ->orderByDesc('order_date')
@@ -51,14 +52,14 @@ class PurchaseOrderController extends Controller
             if ($request->filled('search')) {
                 $search = $request->get('search');
                 $query->where(function ($q) use ($search) {
-                    $q->where('id', 'like', "%{$search}%")
+                    $q->where('id', ctype_digit((string) $search) ? (int) $search : 0)
                         ->orWhere('order_number', 'like', "%{$search}%")
                         ->orWhere('invoice_number', 'like', "%{$search}%")
                         ->orWhereHas('supplier', fn ($s) => $s->where('name', 'like', "%{$search}%"));
                 });
             }
 
-            $perPage = $request->integer('per_page', 20);
+            $perPage = min(max($request->integer('per_page', 20), 1), 200);
             $orders = $query->paginate($perPage);
 
             return response()->json([
@@ -187,7 +188,7 @@ class PurchaseOrderController extends Controller
 
     public function show(PurchaseOrder $purchase_order): JsonResponse
     {
-        $purchase_order->load(['supplier', 'items.product:id,name,code,stock,unit_price']);
+        $purchase_order->load(['supplier', 'items.product:id,name,code,stock,unit_price', 'payments.user:id,name']);
         return response()->json([
             'success' => true,
             'data' => $purchase_order,
@@ -365,6 +366,16 @@ class PurchaseOrderController extends Controller
             }
             $taxes = $this->purchaseOrderService->computeTaxes($linesTotal, (int) $purchase_order->company_id);
 
+            $alreadyPaid = (float) ($purchase_order->amount_paid ?? 0);
+            if ($purchase_order->invoice_total === null && $taxes['total'] + 0.01 < $alreadyPaid) {
+                DB::rollBack();
+                return response()->json([
+                    'success' => false,
+                    'message' => 'El nuevo total (S/ ' . number_format($taxes['total'], 2) . ') es menor a lo ya pagado (S/ '
+                        . number_format($alreadyPaid, 2) . ')',
+                ], 422);
+            }
+
             $purchase_order->update([
                 'delivery_date' => $validated['delivery_date'] ?? null,
                 'notes' => $validated['notes'] ?? null,
@@ -418,11 +429,14 @@ class PurchaseOrderController extends Controller
             'status' => 'required|string|in:pending,in_transit,partial,delivered,cancelled',
         ])['status'];
 
-        if ($status === 'delivered') {
-            return response()->json([
-                'success' => false,
-                'message' => 'Para marcar entregado use recepción / complete (ingresa stock al kardex)',
-            ], 422);
+        $message = match (true) {
+            $status === 'delivered', $status === 'partial' => 'Para marcar entregado o parcial use la recepción (ingresa stock al kardex)',
+            $status === 'cancelled' => 'Para anular use la acción "Anular" (revierte stock y cierra la cuenta por pagar)',
+            ! in_array($purchase_order->status, ['pending', 'in_transit'], true) => 'Solo se puede cambiar el estado de órdenes pendientes o en tránsito',
+            default => null,
+        };
+        if ($message) {
+            return response()->json(['success' => false, 'message' => $message], 422);
         }
 
         $purchase_order->update(['status' => $status]);
@@ -517,6 +531,8 @@ class PurchaseOrderController extends Controller
             'payment_method' => 'nullable|string|max:40',
             'post_to_cash' => 'nullable|boolean',
             'cash_session_id' => 'nullable|integer',
+            'reference' => 'nullable|string|max:100',
+            'notes' => 'nullable|string|max:500',
         ]);
 
         try {
@@ -527,6 +543,8 @@ class PurchaseOrderController extends Controller
                     'payment_method' => $validated['payment_method'] ?? 'cash',
                     'post_to_cash' => (bool) ($validated['post_to_cash'] ?? false),
                     'cash_session_id' => $validated['cash_session_id'] ?? null,
+                    'reference' => $validated['reference'] ?? null,
+                    'notes' => $validated['notes'] ?? null,
                 ],
                 $request->user()?->id
             );
@@ -739,20 +757,114 @@ class PurchaseOrderController extends Controller
         ]);
     }
 
+    /**
+     * Cuentas por pagar. status: open|partial|closed|pending (open+partial). overdue=1 solo vencidas.
+     */
     public function payables(Request $request): JsonResponse
     {
-        $companyId = (int) ($request->attributes->get('scope_company_id')
+        $companyId = $this->companyId($request);
+        if (! $companyId) {
+            return response()->json(['success' => false, 'message' => 'company_id requerido'], 422);
+        }
+
+        $today = now()->toDateString();
+        $base = \App\Models\PurchasePayable::query()->where('company_id', $companyId);
+
+        $query = (clone $base)
+            ->with(['supplier:id,name', 'purchaseOrder:id,order_number,status,invoice_number'])
+            ->when($request->get('status') === 'pending', fn ($q) => $q->whereIn('status', ['open', 'partial']))
+            ->when(
+                $request->filled('status') && $request->get('status') !== 'pending',
+                fn ($q) => $q->where('status', $request->get('status'))
+            )
+            ->when($request->filled('supplier_id'), fn ($q) => $q->where('supplier_id', $request->integer('supplier_id')))
+            ->when($request->boolean('overdue'), fn ($q) => $q->where('balance', '>', 0)->whereDate('due_date', '<', $today))
+            ->when($request->filled('search'), function ($q) use ($request) {
+                $s = $request->get('search');
+                $q->where(function ($q) use ($s) {
+                    $q->whereHas('supplier', fn ($x) => $x->where('name', 'like', "%{$s}%"))
+                        ->orWhereHas('purchaseOrder', fn ($x) => $x->where('order_number', 'like', "%{$s}%")
+                            ->orWhere('invoice_number', 'like', "%{$s}%"));
+                });
+            })
+            ->orderByRaw("CASE WHEN status = 'closed' THEN 1 ELSE 0 END")
+            ->orderByRaw('due_date IS NULL')
+            ->orderBy('due_date')
+            ->orderByDesc('id');
+
+        $perPage = min(max($request->integer('per_page', 50), 1), 200);
+        $page = $query->paginate($perPage);
+
+        $pending = (clone $base)->where('balance', '>', 0);
+        $summary = [
+            'balance' => round((float) (clone $pending)->sum('balance'), 2),
+            'overdue' => round((float) (clone $pending)->whereDate('due_date', '<', $today)->sum('balance'), 2),
+            'due_7_days' => round((float) (clone $pending)
+                ->whereDate('due_date', '>=', $today)
+                ->whereDate('due_date', '<=', now()->addDays(7)->toDateString())
+                ->sum('balance'), 2),
+            'open_count' => (clone $pending)->count(),
+        ];
+
+        return response()->json([
+            'success' => true,
+            'data' => $page->items(),
+            'meta' => [
+                'total' => $page->total(),
+                'per_page' => $page->perPage(),
+                'current_page' => $page->currentPage(),
+                'last_page' => $page->lastPage(),
+                'summary' => $summary,
+            ],
+        ]);
+    }
+
+    /**
+     * KPIs de compras sobre todas las órdenes de la empresa (no solo la página visible).
+     */
+    public function summary(Request $request): JsonResponse
+    {
+        $companyId = $this->companyId($request);
+        if (! $companyId) {
+            return response()->json(['success' => false, 'message' => 'company_id requerido'], 422);
+        }
+
+        $orders = PurchaseOrder::byCompany($companyId);
+
+        $bySupplier = (clone $orders)
+            ->where('status', '!=', 'cancelled')
+            ->selectRaw('supplier_id, COUNT(*) as orders, SUM(total) as total')
+            ->groupBy('supplier_id')
+            ->orderByDesc('total')
+            ->limit(10)
+            ->with('supplier:id,name')
+            ->get()
+            ->map(fn ($r) => [
+                'supplier_id' => $r->supplier_id,
+                'name' => $r->supplier?->name ?? 'Proveedor',
+                'orders' => (int) $r->orders,
+                'total' => round((float) $r->total, 2),
+            ]);
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'open_count' => (clone $orders)->whereNotIn('status', ['delivered', 'cancelled'])->count(),
+                'invested' => round((float) (clone $orders)->whereIn('status', ['delivered', 'partial'])->sum('total'), 2),
+                'payable' => round((float) \App\Models\PurchasePayable::where('company_id', $companyId)->where('balance', '>', 0)->sum('balance'), 2),
+                'pending_approval' => (clone $orders)->where('approval_status', 'pending_approval')->count(),
+                'by_supplier' => $bySupplier,
+            ],
+        ]);
+    }
+
+    private function companyId(Request $request): ?int
+    {
+        $id = (int) ($request->attributes->get('scope_company_id')
             ?? $request->integer('company_id')
             ?: $request->user()?->company_id);
-        $rows = \App\Models\PurchasePayable::query()
-            ->with(['supplier:id,name', 'purchaseOrder:id,order_number,status'])
-            ->where('company_id', $companyId)
-            ->when($request->filled('status'), fn ($q) => $q->where('status', $request->get('status')))
-            ->orderByDesc('id')
-            ->limit(200)
-            ->get();
 
-        return response()->json(['success' => true, 'data' => $rows]);
+        return $id > 0 ? $id : null;
     }
 
     public function destroy(PurchaseOrder $purchase_order): JsonResponse

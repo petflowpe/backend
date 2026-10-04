@@ -294,8 +294,11 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'throttle:api', EnsureUserCompa
         ->middleware('permission:products.delete|products.manage');
     Route::post('/products/{product}/adjust-stock', [ProductController::class, 'adjustStock'])
         ->middleware('permission:inventory.adjust|products.manage');
-    Route::get('/products/{product}/kardex', [KardexController::class, 'index'])
-        ->middleware('permission:kardex.view|products.view|products.manage');
+    Route::middleware('permission:kardex.view|products.view|products.manage')->group(function () {
+        Route::get('/products/{product}/kardex', [KardexController::class, 'index']);
+        Route::get('/kardex/summary', [KardexController::class, 'summary']);
+        Route::get('/kardex/export', [KardexController::class, 'export']);
+    });
 
     // ========================
     // SERVICIOS (catálogo operativo canónico)
@@ -370,6 +373,7 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'throttle:api', EnsureUserCompa
         Route::get('/purchase-orders/delivery-alerts', [PurchaseOrderController::class, 'deliveryAlerts']);
         Route::get('/purchase-orders/price-history', [PurchaseOrderController::class, 'priceHistory']);
         Route::get('/purchase-orders/payables', [PurchaseOrderController::class, 'payables']);
+        Route::get('/purchase-orders/summary', [PurchaseOrderController::class, 'summary']);
         Route::get('/purchase-orders/settings', [PurchaseOrderController::class, 'settings']);
         Route::get('/purchase-orders/lookup-barcode', [PurchaseOrderController::class, 'lookupBarcode']);
         Route::get('/purchase-orders/{purchase_order}/download-pdf', [PurchaseOrderController::class, 'downloadPdf']);
@@ -429,6 +433,7 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'throttle:api', EnsureUserCompa
 
     // Tesorería (CxC / CxP)
     Route::get('/treasury/receivables', [TreasuryController::class, 'receivables']);
+    Route::get('/treasury/payables', [PurchaseOrderController::class, 'payables']);
 
     Route::get('/companies/{company}/payment-gateways', [\App\Http\Controllers\Api\PaymentGatewayController::class, 'show']);
     Route::put('/companies/{company}/payment-gateways', [\App\Http\Controllers\Api\PaymentGatewayController::class, 'update']);
