@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Company;
 use App\Models\Branch;
 use App\Models\User;
+use App\Services\CompanyCertificateService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
@@ -75,6 +76,11 @@ class SetupController extends Controller
                 $companyData
             );
 
+            if ($request->hasFile('certificado_pem')) {
+                $path = app(CompanyCertificateService::class)->store($company, $request->file('certificado_pem'));
+                $company->update(['certificado_pem' => $path]);
+            }
+
             // Crear sucursal principal
             $branch = $this->createMainBranch($company);
 
@@ -93,7 +99,7 @@ class SetupController extends Controller
                     'ruc' => $company->ruc,
                     'razon_social' => $company->razon_social,
                     'environment' => $request->environment,
-                    'has_certificate' => !empty($company->certificado_pem),
+                    'has_certificate' => app(CompanyCertificateService::class)->exists($company),
                     'branch_count' => $company->branches()->count()
                 ],
                 'branch' => [
@@ -188,7 +194,7 @@ class SetupController extends Controller
                 'company_environment' => $company ? ($company->modo_produccion ? 'produccion' : 'beta') : null,
                 'debug' => config('app.debug'),
                 'app_key_set' => !empty(config('app.key')),
-                'certificate_exists' => $company ? !empty($company->certificado_pem) : false,
+                'certificate_exists' => $company ? app(CompanyCertificateService::class)->exists($company) : false,
                 'logo_exists' => $company ? !empty($company->logo_path) : false,
                 
                 // Estado de configuración paso a paso
@@ -243,14 +249,11 @@ class SetupController extends Controller
                 ], 403);
             }
 
-            // Configurar certificado si se proporciona
             if ($request->hasFile('certificate_file')) {
-                $certificateFile = $request->file('certificate_file');
-                $path = $certificateFile->storeAs('certificado', 'certificado.pem', 'public');
-                
+                $path = app(CompanyCertificateService::class)->store($company, $request->file('certificate_file'));
                 $company->update([
                     'certificado_pem' => $path,
-                    'certificado_password' => $request->certificate_password
+                    'certificado_password' => $request->certificate_password,
                 ]);
             }
 
@@ -263,7 +266,7 @@ class SetupController extends Controller
                     'id' => $company->id,
                     'ruc' => $company->ruc,
                     'environment' => $request->environment,
-                    'has_certificate' => !empty($company->certificado_pem)
+                    'has_certificate' => app(CompanyCertificateService::class)->exists($company),
                 ]
             ]);
 
@@ -342,11 +345,9 @@ class SetupController extends Controller
             ? filter_var($activo, FILTER_VALIDATE_BOOLEAN) 
             : true;
         
-        // Procesar certificado PEM si se subió un archivo
-        if ($request->hasFile('certificado_pem')) {
-            $certificateFile = $request->file('certificado_pem');
-            $path = $certificateFile->storeAs('certificado', 'certificado.pem', 'public');
-            $companyData['certificado_pem'] = $path;
+        // El certificado se guarda en disco privado después de create/update (ver applyCertificateUpload).
+        unset($companyData['certificado_pem']);
+        if ($request->filled('certificado_password')) {
             $companyData['certificado_password'] = $request->certificado_password;
         }
         
@@ -442,19 +443,22 @@ class SetupController extends Controller
      */
     private function checkCertificatesDirectory(): array
     {
-        // Verificar directorios donde realmente se guardan los archivos
-        $certificadoExists = Storage::disk('public')->exists('certificado');
-        $logoExists = Storage::disk('public')->exists('logo');
-        
-        // Crear directorios si no existen
-        if (!$certificadoExists) Storage::disk('public')->makeDirectory('certificado');
-        if (!$logoExists) Storage::disk('public')->makeDirectory('logo');
-        
+        if (! Storage::disk('local')->exists('certificado')) {
+            Storage::disk('local')->makeDirectory('certificado');
+        }
+        if (! Storage::disk('public')->exists('logo')) {
+            Storage::disk('public')->makeDirectory('logo');
+        }
+
+        $company = Company::first();
+        $certs = app(CompanyCertificateService::class);
+
         return [
-            'certificado_directory' => $certificadoExists,
-            'logo_directory' => $logoExists,
-            'certificado_file_exists' => Storage::disk('public')->exists('certificado/certificado.pem'),
-            'storage_link_exists' => is_link(public_path('storage'))
+            'certificado_directory' => Storage::disk('local')->exists('certificado'),
+            'logo_directory' => Storage::disk('public')->exists('logo'),
+            'certificado_file_exists' => $company ? $certs->exists($company) : false,
+            'certificado_disk' => 'local (private)',
+            'storage_link_exists' => is_link(public_path('storage')),
         ];
     }
 }

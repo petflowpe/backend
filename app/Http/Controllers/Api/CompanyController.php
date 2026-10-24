@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\Company\StoreCompanyRequest;
 use App\Http\Requests\Company\UpdateCompanyRequest;
 use App\Models\Company;
+use App\Services\CompanyCertificateService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -76,11 +77,12 @@ class CompanyController extends Controller
         try {
             $validatedData = $this->processRequestData($request);
             $company = Company::create($validatedData);
+            $this->storeCertificateIfPresent($request, $company);
 
             return response()->json([
                 'success' => true,
                 'message' => 'Empresa creada exitosamente',
-                'data' => $company->load('configurations')
+                'data' => $company->fresh()->load('configurations')
             ], 201);
 
         } catch (Exception $e) {
@@ -129,6 +131,7 @@ class CompanyController extends Controller
         try {
             $validatedData = $this->processRequestData($request);
             $company->update($validatedData);
+            $this->storeCertificateIfPresent($request, $company);
 
             Log::info("Empresa actualizada exitosamente", [
                 'company_id' => $company->id,
@@ -282,10 +285,8 @@ class CompanyController extends Controller
         $validatedData['usuario_sol'] = $validatedData['usuario_sol'] ?? 'DEMO';
         $validatedData['clave_sol'] = $validatedData['clave_sol'] ?? 'DEMO';
 
-        // Procesar archivos
-        if ($request->hasFile('certificado_pem')) {
-            $validatedData['certificado_pem'] = $this->storeFile($request->file('certificado_pem'), 'certificado', 'certificado.pem');
-        }
+        // El certificado PEM se guarda en disco privado tras create/update (ver storeCertificateIfPresent).
+        unset($validatedData['certificado_pem']);
 
         if ($request->hasFile('logo_path')) {
             $fileName = 'logo_' . time() . '.' . $request->file('logo_path')->getClientOriginalExtension();
@@ -309,6 +310,19 @@ class CompanyController extends Controller
     private function storeFile($file, string $directory, string $fileName): string
     {
         return $file->storeAs($directory, $fileName, 'public');
+    }
+
+    private function storeCertificateIfPresent(Request $request, Company $company): void
+    {
+        if (! $request->hasFile('certificado_pem')) {
+            return;
+        }
+
+        $path = app(CompanyCertificateService::class)->store($company, $request->file('certificado_pem'));
+        $company->update([
+            'certificado_pem' => $path,
+            'certificado_password' => $request->input('certificado_password', $company->certificado_password),
+        ]);
     }
 
     /**

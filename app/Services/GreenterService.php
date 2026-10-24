@@ -56,22 +56,13 @@ class GreenterService
         
         $see->setService($endpoint);
         
-        // Configurar certificado cargando desde archivo
         try {
-            $certificadoPath = storage_path('app/public/certificado/certificado.pem');
-            
-            if (!file_exists($certificadoPath)) {
-                throw new Exception("Archivo de certificado no encontrado: " . $certificadoPath);
-            }
-            
-            $certificadoContent = file_get_contents($certificadoPath);
-            
-            if ($certificadoContent === false) {
-                throw new Exception("No se pudo leer el archivo de certificado");
-            }
-            
-            $see->setCertificate($certificadoContent);
-            Log::info("Certificado cargado desde archivo: " . $certificadoPath);
+            $certs = app(CompanyCertificateService::class);
+            $see->setCertificate($certs->contents($this->company));
+            Log::info('Certificado SUNAT cargado', [
+                'company_id' => $this->company->id,
+                'path' => $certs->absolutePath($this->company),
+            ]);
         } catch (Exception $e) {
             Log::error("Error al configurar certificado: " . $e->getMessage());
             throw new Exception("Error al configurar certificado: " . $e->getMessage());
@@ -108,22 +99,13 @@ class GreenterService
             'cpe' => $endpoint,
         ]);
         
-        // Configurar certificado
         try {
-            $certificadoPath = storage_path('app/public/certificado/certificado.pem');
-            
-            if (!file_exists($certificadoPath)) {
-                throw new Exception("Archivo de certificado no encontrado para GRE: " . $certificadoPath);
-            }
-            
-            $certificadoContent = file_get_contents($certificadoPath);
-            
-            if ($certificadoContent === false) {
-                throw new Exception("No se pudo leer el archivo de certificado para GRE");
-            }
-            
-            $api->setCertificate($certificadoContent);
-            Log::info("Certificado GRE cargado desde archivo: " . $certificadoPath);
+            $certs = app(CompanyCertificateService::class);
+            $api->setCertificate($certs->contents($this->company));
+            Log::info('Certificado GRE cargado', [
+                'company_id' => $this->company->id,
+                'path' => $certs->absolutePath($this->company),
+            ]);
         } catch (Exception $e) {
             Log::error("Error al configurar certificado para GRE: " . $e->getMessage());
             throw new Exception("Error al configurar certificado para GRE: " . $e->getMessage());
@@ -615,8 +597,11 @@ class GreenterService
     public function sendRetention($retention)
     {
         try {
-            // Configurar endpoint específico para retenciones
-            $this->see->setService(SunatEndpoints::RETENCION_BETA);
+            $this->see->setService(
+                $this->company->modo_produccion
+                    ? SunatEndpoints::RETENCION_PRODUCCION
+                    : SunatEndpoints::RETENCION_BETA
+            );
             
             $result = $this->see->send($retention);
             

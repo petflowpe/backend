@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Company;
+use App\Services\CompanyCertificateService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -57,7 +58,7 @@ class SunatConfigController extends Controller
                     'modo_produccion' => (bool) $company->modo_produccion,
                     'endpoint_beta' => $company->endpoint_beta,
                     'endpoint_produccion' => $company->endpoint_produccion,
-                    'has_certificate' => !empty($company->certificado_pem),
+                    'has_certificate' => app(CompanyCertificateService::class)->exists($company),
                     'has_certificate_password' => !empty($company->certificado_password),
                 ],
                 'invoice_settings' => array_merge([
@@ -185,10 +186,7 @@ class SunatConfigController extends Controller
             return response()->json(['success' => false, 'errors' => $validator->errors()], 422);
         }
 
-        $file = $request->file('certificate_file');
-        $ext = strtolower($file->getClientOriginalExtension());
-        $name = 'cert_' . $company->id . '_' . time() . '.' . ($ext ?: 'pem');
-        $path = $file->storeAs('certificado', $name, 'public');
+        $path = app(CompanyCertificateService::class)->store($company, $request->file('certificate_file'));
 
         $update = ['certificado_pem' => $path];
         if ($request->filled('certificate_password')) {
