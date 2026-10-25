@@ -961,10 +961,20 @@ class GreenterService
         // Para traslado entre establecimientos (código 04)
         if ($despatchData['cod_traslado'] === '04') {
             $envio->setIndicadores(['SUNAT_Envio_IndicadorTrasladoVehiculoM1L']);
-            
-            // Agregar RUC y código de local para misma empresa
-            $llegada->setRuc('20161515648')->setCodLocal('00002');
-            $partida->setRuc('20161515648')->setCodLocal('00001');
+
+            $ruc = (string) $this->company->ruc;
+            $partidaLocal = (string) (
+                $despatchData['partida_cod_local']
+                ?? $despatchData['partida']['cod_local']
+                ?? '0000'
+            );
+            $llegadaLocal = (string) (
+                $despatchData['llegada_cod_local']
+                ?? $despatchData['llegada']['cod_local']
+                ?? '0001'
+            );
+            $partida->setRuc($despatchData['partida_ruc'] ?? $ruc)->setCodLocal($partidaLocal);
+            $llegada->setRuc($despatchData['llegada_ruc'] ?? $ruc)->setCodLocal($llegadaLocal);
         }
         
         $envio->setLlegada($llegada)->setPartida($partida);
@@ -1052,25 +1062,49 @@ class GreenterService
         return $despatch;
     }
 
-    protected function getGRECompany()
+    protected function getGRECompany(): GreenterCompany
     {
-        // Para GRE usar datos consistentes con las credenciales SOL de test
-        $company = new GreenterCompany();
-        
-        $company->setRuc('20161515648') // Debe coincidir con credenciales SOL
-                ->setRazonSocial('EMPRESA DE PRUEBA SUNAT')
-                ->setNombreComercial('EMPRESA DE PRUEBA')
-                ->setAddress((new Address())
-                    ->setUbigueo('150101')
-                    ->setDepartamento('LIMA')
-                    ->setProvincia('LIMA')
-                    ->setDistrito('LIMA')
-                    ->setUrbanizacion('-')
-                    ->setDireccion('AV. LIMA 123')
-                    ->setCodLocal('0000') // Para GRE, código de local
-                );
+        return $this->getGreenterCompany();
+    }
 
-        return $company;
+    /**
+     * API GRE con endpoint y credenciales de la empresa (beta o producción).
+     */
+    public function buildGreApi(): \Greenter\Api
+    {
+        if (! $this->company->hasGreCredentials()) {
+            throw new Exception(
+                "Las credenciales GRE no están configuradas para la empresa: {$this->company->razon_social}"
+            );
+        }
+
+        $guideConfig = $this->company->getSunatServiceConfig('guias_remision');
+        $endpoint = $guideConfig['api_endpoint'] ?? $this->company->getGuideApiEndpoint();
+        if (! $endpoint) {
+            throw new Exception('No hay endpoint GRE configurado para la empresa');
+        }
+
+        $api = new \Greenter\Api([
+            'auth' => $endpoint,
+            'cpe' => $endpoint,
+        ]);
+
+        $certs = app(CompanyCertificateService::class);
+        $api->setBuilderOptions([
+            'strict_variables' => true,
+            'optimizations' => 0,
+            'debug' => (bool) config('app.debug'),
+            'cache' => false,
+        ])
+            ->setApiCredentials($this->company->getGreClientId(), $this->company->getGreClientSecret())
+            ->setClaveSOL(
+                $this->company->getGreRucProveedor(),
+                $this->company->getGreUsuarioSol(),
+                $this->company->getGreClaveSol()
+            )
+            ->setCertificate($certs->contents($this->company));
+
+        return $api;
     }
 
     public function sendDespatchDocument($despatch)

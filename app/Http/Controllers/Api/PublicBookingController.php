@@ -166,10 +166,11 @@ class PublicBookingController extends Controller
             'appointment.date' => 'required|date|after_or_equal:today',
             'appointment.time' => 'required|date_format:H:i',
             'appointment.duration' => 'nullable|integer|min:15|max:480',
-            'appointment.price' => 'required|numeric|min:0',
+            // El precio del cliente se ignora: siempre se calcula en el servidor.
+            'appointment.price' => 'nullable|numeric|min:0',
             'appointment.payment_method' => 'nullable|string|in:Efectivo,Tarjeta,Yape,Plin,Transferencia',
             'appointment.notes' => 'nullable|string|max:2000',
-            'appointment.service_id' => 'nullable|integer|exists:services,id',
+            'appointment.service_id' => 'nullable|integer',
         ]);
 
         if ($validator->fails()) {
@@ -245,10 +246,15 @@ class PublicBookingController extends Controller
                 'fecha_registro' => now()->toDateString(),
             ]);
 
+            $catalog = $this->resolvePublicService($companyId, $aptInput);
+            if (! $catalog) {
+                throw new Exception('El servicio indicado no está disponible para reserva pública.');
+            }
+
             $date = Carbon::parse($aptInput['date']);
             $vehicleId = $this->resolveVehicleId($companyId, $client, $date, $aptInput['time'], $clientInput['distrito']);
 
-            $price = (float) $aptInput['price'];
+            $price = (float) $catalog['price'];
             $appointment = Appointment::create([
                 'tracking_code' => $this->generateTrackingCode(),
                 'booking_source' => PortalBookingService::SOURCE_PUBLIC_GUEST,
@@ -256,13 +262,13 @@ class PublicBookingController extends Controller
                 'pet_id' => $pet->id,
                 'company_id' => $companyId,
                 'vehicle_id' => $vehicleId,
-                'service_id' => $aptInput['service_id'] ?? null,
-                'service_type' => $aptInput['service_type'],
-                'service_name' => $aptInput['service_name'],
-                'service_category' => $aptInput['service_category'],
+                'service_id' => $catalog['service_id'],
+                'service_type' => $catalog['service_type'],
+                'service_name' => $catalog['service_name'],
+                'service_category' => $catalog['service_category'],
                 'date' => $aptInput['date'],
                 'time' => $aptInput['time'],
-                'duration' => $aptInput['duration'] ?? 60,
+                'duration' => $catalog['duration'],
                 'address' => $clientInput['direccion'],
                 'district' => $clientInput['distrito'],
                 'province' => $clientInput['provincia'] ?? 'Lima',
@@ -377,6 +383,77 @@ class PublicBookingController extends Controller
 
         $vehicle = $vehicles->first();
         return $vehicle?->id;
+    }
+
+    /**
+     * Precio/nombre/duración desde el catálogo del servidor. Nunca se usa appointment.price del cliente.
+     *
+     * @return array{service_id: ?int, service_name: string, service_type: string, service_category: string, price: float, duration: int}|null
+     */
+    private function resolvePublicService(int $companyId, array $aptInput): ?array
+    {
+        $serviceId = isset($aptInput['service_id']) ? (int) $aptInput['service_id'] : 0;
+        if ($serviceId > 0) {
+            $service = Service::query()
+                ->where('company_id', $companyId)
+                ->where('active', true)
+                ->whereKey($serviceId)
+                ->first();
+            if ($service) {
+                return $this->mapDbServiceToBooking($service, $aptInput);
+            }
+        }
+
+        $name = trim((string) ($aptInput['service_name'] ?? ''));
+        if ($name !== '') {
+            $service = Service::query()
+                ->where('company_id', $companyId)
+                ->where('active', true)
+                ->where('name', $name)
+                ->first();
+            if ($service) {
+                return $this->mapDbServiceToBooking($service, $aptInput);
+            }
+        }
+
+        // Catálogo demo solo si la empresa aún no tiene servicios.
+        if (Service::query()->where('company_id', $companyId)->where('active', true)->exists()) {
+            return null;
+        }
+
+        $code = (string) ($aptInput['service_type'] ?? '');
+        foreach ($this->defaultServiceCatalog() as $row) {
+            if ($row['code'] === $code || $row['name'] === $name || (string) $row['id'] === (string) $serviceId) {
+                return [
+                    'service_id' => null,
+                    'service_name' => $row['name'],
+                    'service_type' => $row['code'],
+                    'service_category' => $row['service_category'],
+                    'price' => (float) $row['price'],
+                    'duration' => (int) ($aptInput['duration'] ?? $row['duration']),
+                ];
+            }
+        }
+
+        return null;
+    }
+
+    private function mapDbServiceToBooking(Service $service, array $aptInput): array
+    {
+        $rep = \App\Services\ServiceCatalogService::representativePricing(
+            is_array($service->pricing) ? $service->pricing : null
+        );
+        $category = $service->category ?? 'MovilVet';
+        $serviceCategory = str_contains(strtolower($category), 'pelu') ? 'Peluquería' : 'MovilVet';
+
+        return [
+            'service_id' => (int) $service->id,
+            'service_name' => $service->name,
+            'service_type' => $service->code ?? ('svc-' . $service->id),
+            'service_category' => $aptInput['service_category'] ?? $serviceCategory,
+            'price' => (float) $rep['price'],
+            'duration' => (int) ($aptInput['duration'] ?? $rep['duration']),
+        ];
     }
 
     private function buildPublicBookingNotes(?string $notes): string

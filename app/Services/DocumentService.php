@@ -45,7 +45,7 @@ class DocumentService
                            ->firstOrFail();
             
             // Crear o buscar cliente
-            $client = $this->getOrCreateClient($data['client']);
+            $client = $this->getOrCreateClient($data['client'], (int) $company->id);
             
             // Obtener siguiente correlativo
             $serie = $data['serie'];
@@ -131,7 +131,7 @@ class DocumentService
                            ->firstOrFail();
             
             // Crear o buscar cliente
-            $client = $this->getOrCreateClient($data['client']);
+            $client = $this->getOrCreateClient($data['client'], (int) $company->id);
             
             // Obtener siguiente correlativo
             $serie = $data['serie'];
@@ -312,18 +312,19 @@ class DocumentService
                 $document->xml_path = $xmlPath;
             }
             
-            if ($result['success'] && $result['cdr_zip']) {
+            if ($result['success'] && $result['cdr_zip'] && $result['cdr_response']) {
                 $cdrPath = $this->fileService->saveCdr($document, $result['cdr_zip']);
                 $document->cdr_path = $cdrPath;
-                
-                $document->estado_sunat = 'ACEPTADO';
+
+                $cdrCode = $result['cdr_response']->getCode();
+                $document->estado_sunat = $this->sunatStateFromCdrCode($cdrCode);
                 $document->respuesta_sunat = json_encode([
                     'id' => $result['cdr_response']->getId(),
-                    'code' => $result['cdr_response']->getCode(),
+                    'code' => $cdrCode,
                     'description' => $result['cdr_response']->getDescription(),
                     'notes' => $result['cdr_response']->getNotes(),
                 ]);
-                
+
                 // Obtener hash del XML
                 $xmlSigned = $greenterService->getXmlSigned($greenterDocument);
                 if ($xmlSigned) {
@@ -357,11 +358,16 @@ class DocumentService
             }
             
             $document->save();
-            
+
+            $accepted = $document->estado_sunat === 'ACEPTADO';
+
             return [
-                'success' => $result['success'],
+                'success' => $accepted,
                 'document' => $document,
-                'error' => $result['success'] ? null : $result['error']
+                'error' => $accepted ? null : ($result['error'] ?? (object) [
+                    'code' => $document->estado_sunat,
+                    'message' => 'SUNAT no aceptó el comprobante',
+                ]),
             ];
             
         } catch (Exception $e) {
@@ -376,9 +382,10 @@ class DocumentService
         }
     }
 
-    protected function getOrCreateClient(array $clientData): Client
+    protected function getOrCreateClient(array $clientData, int $companyId): Client
     {
         return Client::firstOrCreate([
+            'company_id' => $companyId,
             'tipo_documento' => $clientData['tipo_documento'],
             'numero_documento' => $clientData['numero_documento'],
         ], [
@@ -391,7 +398,21 @@ class DocumentService
             'departamento' => $clientData['departamento'] ?? null,
             'telefono' => $clientData['telefono'] ?? null,
             'email' => $clientData['email'] ?? null,
+            'activo' => true,
         ]);
+    }
+
+    /**
+     * SUNAT: 0 = aceptado; 2000–3999 = aceptado con observaciones; resto = rechazado.
+     */
+    protected function sunatStateFromCdrCode(mixed $code): string
+    {
+        $n = (int) $code;
+        if ($n === 0 || ($n >= 2000 && $n <= 3999)) {
+            return 'ACEPTADO';
+        }
+
+        return 'RECHAZADO';
     }
 
     protected function calculateTotals(array &$detalles, array $globalData = []): array
@@ -850,19 +871,27 @@ class DocumentService
             $result = $greenterService->checkSummaryStatus($summary->ticket);
             
             if ($result['success'] && $result['cdr_response']) {
-                // Guardar CDR
                 $cdrPath = $this->fileService->saveCdr($summary, $result['cdr_zip']);
-                
-                // Actualizar estado
+                $cdrCode = $result['cdr_response']->getCode();
+                $estado = $this->sunatStateFromCdrCode($cdrCode);
+
                 $summary->update([
                     'cdr_path' => $cdrPath,
-                    'estado_proceso' => 'COMPLETADO',
-                    'estado_sunat' => 'ACEPTADO',
+                    'estado_proceso' => $estado === 'ACEPTADO' ? 'COMPLETADO' : 'ERROR',
+                    'estado_sunat' => $estado,
                     'respuesta_sunat' => json_encode([
-                        'code' => $result['cdr_response']->getCode(),
-                        'description' => $result['cdr_response']->getDescription()
-                    ])
+                        'code' => $cdrCode,
+                        'description' => $result['cdr_response']->getDescription(),
+                    ]),
                 ]);
+
+                if ($estado !== 'ACEPTADO') {
+                    return [
+                        'success' => false,
+                        'document' => $summary->fresh(),
+                        'error' => $result['cdr_response']->getDescription() ?? 'Resumen rechazado por SUNAT',
+                    ];
+                }
 
                 try {
                     DB::transaction(fn () => $this->returnStockForSummaryVoids($summary));
@@ -994,7 +1023,7 @@ class DocumentService
                            ->firstOrFail();
             
             // Crear o buscar cliente
-            $client = $this->getOrCreateClient($data['client']);
+            $client = $this->getOrCreateClient($data['client'], (int) $company->id);
             
             // Obtener siguiente correlativo
             $serie = $data['serie'];
@@ -1352,7 +1381,7 @@ class DocumentService
                            ->firstOrFail();
             
             // Crear o buscar cliente
-            $client = $this->getOrCreateClient($data['client']);
+            $client = $this->getOrCreateClient($data['client'], (int) $company->id);
             
             // Obtener siguiente correlativo
             $serie = $data['serie'];
@@ -1471,7 +1500,7 @@ class DocumentService
             if (isset($data['destinatario_id'])) {
                 $destinatario = Client::findOrFail($data['destinatario_id']);
             } else {
-                $destinatario = $this->getOrCreateClient($data['destinatario']);
+                $destinatario = $this->getOrCreateClient($data['destinatario'], (int) $company->id);
             }
             
             // Obtener siguiente correlativo automático (ignorar correlativo enviado)
@@ -1778,44 +1807,15 @@ class DocumentService
                 $despatch->setAddDocs($relDocs);
             }
             
-            // USAR LA CONFIGURACIÓN DE LA CLASE UTIL DE GREENTER
-            $api = new \Greenter\Api([
-                'auth' => 'https://gre-test.nubefact.com/v1',
-                'cpe' => 'https://gre-test.nubefact.com/v1',
-            ]);
-            
             $company = $guide->company;
-            $certificadoContent = app(CompanyCertificateService::class)->contents($company);
-            
-            if (!$company->hasGreCredentials()) {
-                throw new Exception("Las credenciales GRE no están configuradas para la empresa: {$company->razon_social}");
-            }
-            
-            $clientId = $company->getGreClientId();
-            $clientSecret = $company->getGreClientSecret();
-            $rucProveedor = $company->getGreRucProveedor();
-            $usuarioSol = $company->getGreUsuarioSol();
-            $claveSol = $company->getGreClaveSol();
-            
-            Log::info("Configurando credenciales GRE desde base de datos", [
+            $greenterService = new GreenterService($company);
+            $api = $greenterService->buildGreApi();
+
+            Log::info('Enviando GRE con credenciales de la empresa', [
                 'company_id' => $company->id,
                 'modo_produccion' => $company->modo_produccion,
-                'client_id' => $clientId ? '***' . substr($clientId, -4) : 'No configurado',
-                'ruc_proveedor' => $rucProveedor,
-                'usuario_sol' => $usuarioSol,
+                'endpoint' => $company->getGuideApiEndpoint(),
             ]);
-            
-            $api->setBuilderOptions([
-                'strict_variables' => true,
-                'optimizations' => 0,
-                'debug' => true,
-                'cache' => false,
-            ])
-            ->setApiCredentials($clientId, $clientSecret)
-            ->setClaveSOL($rucProveedor, $usuarioSol, $claveSol)
-            ->setCertificate($certificadoContent);
-            
-            Log::info("Enviando a SUNAT con credenciales configuradas...");
             $result = $api->send($despatch);
             
             // Procesar resultado como en ejemplos Greenter
@@ -1907,55 +1907,43 @@ class DocumentService
                 'ticket' => $guide->ticket
             ]);
             
-            // USAR CONFIGURACIÓN DIRECTA COMO EN ENVÍO
-            $api = new \Greenter\Api([
-                'auth' => 'https://gre-test.nubefact.com/v1',
-                'cpe' => 'https://gre-test.nubefact.com/v1',
-            ]);
-            
-            $certificadoContent = app(CompanyCertificateService::class)->contents($guide->company);
+            $company = $guide->company;
+            $api = (new GreenterService($company))->buildGreApi();
 
-            $api->setBuilderOptions([
-                'strict_variables' => true,
-                'optimizations' => 0,
-                'debug' => true,
-                'cache' => false,
-            ])
-            ->setApiCredentials('test-85e5b0ae-255c-4891-a595-0b98c65c9854', 'test-Hty/M6QshYvPgItX2P0+Kw==')
-            ->setClaveSOL('20161515648', 'MODDATOS', 'MODDATOS')
-            ->setCertificate($certificadoContent);
-            
-            Log::info("Consultando estado en SUNAT...");
+            Log::info('Consultando estado GRE en SUNAT...', [
+                'guide_id' => $guide->id,
+                'company_id' => $company->id,
+            ]);
             $result = $api->getStatus($guide->ticket);
-            
+
             if ($result->isSuccess()) {
                 $cdr = $result->getCdrResponse();
-                Log::info("Estado obtenido exitosamente", [
-                    'code' => $cdr->getCode(),
-                    'description' => $cdr->getDescription()
+                $cdrCode = $cdr->getCode();
+                Log::info('Estado GRE obtenido', [
+                    'code' => $cdrCode,
+                    'description' => $cdr->getDescription(),
                 ]);
-                
-                // Guardar CDR
+
                 $cdrZip = $result->getCdrZip();
                 $cdrPath = null;
                 if ($cdrZip) {
                     $cdrPath = $this->fileService->saveCdr($guide, $cdrZip);
                 }
-                
-                // Actualizar estado
+
+                $estado = $this->sunatStateFromCdrCode($cdrCode);
                 $guide->update([
                     'cdr_path' => $cdrPath,
-                    'estado_sunat' => 'ACEPTADO',
+                    'estado_sunat' => $estado,
                     'respuesta_sunat' => json_encode([
-                        'code' => $cdr->getCode(),
-                        'description' => $cdr->getDescription()
-                    ])
+                        'code' => $cdrCode,
+                        'description' => $cdr->getDescription(),
+                    ]),
                 ]);
-                
+
                 return [
-                    'success' => true,
+                    'success' => $estado === 'ACEPTADO',
                     'document' => $guide->fresh(),
-                    'cdr_response' => $cdr
+                    'cdr_response' => $cdr,
                 ];
             } else {
                 // Error en la consulta
@@ -2156,7 +2144,7 @@ class DocumentService
                            ->firstOrFail();
             
             // Crear o buscar el proveedor
-            $proveedor = $this->getOrCreateClient($data['proveedor']);
+            $proveedor = $this->getOrCreateClient($data['proveedor'], (int) $company->id);
             
             // Obtener siguiente correlativo (tipo '20' para retenciones)
             $serie = $data['serie'];
@@ -2227,10 +2215,10 @@ class DocumentService
                 $retention->xml_path = $this->fileService->saveXml($retention, $result['xml'], 'retention');
             }
             
-            if ($result['success'] && $result['cdr_zip']) {
+            if ($result['success'] && $result['cdr_zip'] && $result['cdr_response']) {
                 $retention->cdr_path = $this->fileService->saveCdr($retention, $result['cdr_zip'], 'retention');
                 $retention->hash_cdr = $result['cdr_response']->getId() ?? '';
-                $retention->estado_sunat = 'ACEPTADO';
+                $retention->estado_sunat = $this->sunatStateFromCdrCode($result['cdr_response']->getCode());
             } else {
                 $retention->estado_sunat = 'RECHAZADO';
             }
@@ -2363,31 +2351,23 @@ class DocumentService
             $result = $greenterService->checkVoidedDocumentStatus($voidedDocument->ticket);
             
             if ($result['success']) {
-                // Procesar respuesta CDR
                 $cdrResponse = $result['cdr_response'];
                 $estado = 'PROCESANDO';
-                
-                if ($cdrResponse && method_exists($cdrResponse, 'getDescription') && $cdrResponse->getDescription() !== null) {
-                    if (strpos($cdrResponse->getDescription(), 'aceptad') !== false) {
-                        $estado = 'ACEPTADO';
-                        
-                        // Guardar CDR
-                        if ($result['cdr_zip']) {
-                            $cdrPath = $this->fileService->saveCdr($voidedDocument, $result['cdr_zip']);
-                            $voidedDocument->cdr_path = $cdrPath;
-                        }
-                    } elseif (strpos($cdrResponse->getDescription(), 'rechazad') !== false) {
-                        $estado = 'RECHAZADO';
+
+                if ($cdrResponse) {
+                    $estado = $this->sunatStateFromCdrCode($cdrResponse->getCode());
+                    if ($result['cdr_zip']) {
+                        $voidedDocument->cdr_path = $this->fileService->saveCdr($voidedDocument, $result['cdr_zip']);
                     }
                 }
-                
+
                 $voidedDocument->update([
                     'estado_sunat' => $estado,
                     'respuesta_sunat' => $cdrResponse ? json_encode([
                         'code' => $cdrResponse->getCode(),
-                        'description' => $cdrResponse->getDescription()
+                        'description' => $cdrResponse->getDescription(),
                     ]) : null,
-                    'cdr_path' => $voidedDocument->cdr_path
+                    'cdr_path' => $voidedDocument->cdr_path,
                 ]);
 
                 if ($estado === 'ACEPTADO') {
