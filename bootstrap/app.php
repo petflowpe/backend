@@ -43,5 +43,9 @@ return Application::configure(basePath: dirname(__DIR__))
         $schedule->command('backup:private-data')
             ->dailyAt('02:30')
             ->withoutOverlapping(60);
+
+        $schedule->command('backup:database')
+            ->dailyAt('02:45')
+            ->withoutOverlapping(120);
     })
     ->create();
