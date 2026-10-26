@@ -90,6 +90,13 @@ class SunatConfigController extends Controller
             'company.ruc' => 'sometimes|string|size:11',
             'company.razon_social' => 'sometimes|string|max:255',
             'company.nombre_comercial' => 'nullable|string|max:255',
+            'company.booking_slug' => [
+                'nullable',
+                'string',
+                'max:64',
+                'regex:/^[a-z0-9]+(?:-[a-z0-9]+)*$/',
+                \Illuminate\Validation\Rule::unique('companies', 'booking_slug')->ignore($company->id),
+            ],
             'company.direccion' => 'sometimes|string|max:255',
             'company.ubigeo' => 'sometimes|string|size:6',
             'company.distrito' => 'sometimes|string|max:100',

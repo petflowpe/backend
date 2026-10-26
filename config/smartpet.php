@@ -13,4 +13,12 @@ return [
      * SMARTPET_PUBLIC_BOOKING_SLUG=mi-clinica
      */
     'public_booking_slug' => env('SMARTPET_PUBLIC_BOOKING_SLUG'),
+
+    /**
+     * Cloudflare Turnstile (opcional). Sin secret, no se exige CAPTCHA.
+     */
+    'turnstile' => [
+        'site_key' => env('TURNSTILE_SITE_KEY'),
+        'secret_key' => env('TURNSTILE_SECRET_KEY'),
+    ],
 ];

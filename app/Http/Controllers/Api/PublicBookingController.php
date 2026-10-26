@@ -12,6 +12,9 @@ use App\Models\Service;
 use App\Models\Vehicle;
 use App\Services\AvailabilityService;
 use App\Services\PortalBookingService;
+use App\Services\PublicCompanyResolver;
+use App\Services\TrackingOtpService;
+use App\Services\TurnstileVerifier;
 use App\Services\VehicleCoverageService;
 use Carbon\Carbon;
 use Exception;
@@ -25,43 +28,16 @@ use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 
 class PublicBookingController extends Controller
 {
-    /**
-     * Resuelve la empresa del portal: ruta {companySlug}, header, query o fallback .env.
-     */
+    public function __construct(
+        private readonly PublicCompanyResolver $companies,
+        private readonly TurnstileVerifier $turnstile,
+        private readonly TrackingOtpService $trackingOtp,
+    ) {
+    }
+
     private function resolveCompany(Request $request, ?string $companySlug = null): Company
     {
-        $raw = $companySlug
-            ?? $request->header('X-Booking-Slug')
-            ?? $request->query('company')
-            ?? $request->query('slug')
-            ?? config('smartpet.public_booking_slug');
-
-        $slug = is_string($raw) ? Str::slug(trim($raw)) : '';
-
-        if ($slug !== '') {
-            $company = Company::query()
-                ->where('activo', true)
-                ->where('booking_slug', $slug)
-                ->first();
-
-            if (! $company) {
-                throw new NotFoundHttpException('Empresa de reservas no encontrada.');
-            }
-
-            return $company;
-        }
-
-        $fallbackId = (int) config('smartpet.public_company_id', 1);
-        $company = Company::query()
-            ->where('activo', true)
-            ->whereKey($fallbackId)
-            ->first();
-
-        if (! $company) {
-            throw new NotFoundHttpException('Empresa de reservas no configurada.');
-        }
-
-        return $company;
+        return $this->companies->resolve($request, $companySlug);
     }
 
     public function config(Request $request, ?string $companySlug = null): JsonResponse
@@ -90,6 +66,8 @@ class PublicBookingController extends Controller
                 'company_name' => $company->nombre_comercial ?: $company->razon_social,
                 'working_hours' => $workingHours,
                 'portal_settings' => $portalSettings,
+                'turnstile_site_key' => $this->turnstile->siteKey(),
+                'turnstile_required' => $this->turnstile->isEnabled(),
             ],
         ]);
     }
@@ -194,6 +172,17 @@ class PublicBookingController extends Controller
                     'appointment_id' => 0,
                 ],
             ], 201);
+        }
+
+        $captcha = $this->turnstile->verify(
+            $request->input('cf_turnstile_response') ?? $request->input('turnstile_token'),
+            $request->ip()
+        );
+        if (! $captcha['ok']) {
+            return response()->json([
+                'success' => false,
+                'message' => $captcha['message'] ?? 'Verificación anti-bot requerida.',
+            ], 422);
         }
 
         $validator = Validator::make($request->all(), [
@@ -430,10 +419,15 @@ class PublicBookingController extends Controller
             ], 404);
         }
 
-        $verified = $this->verifyTrackingPhone(
+        $otpOk = $this->trackingOtp->verify(
+            $normalized,
+            (string) ($request->query('otp') ?? $request->input('otp') ?? '')
+        );
+        $phoneOk = $this->verifyTrackingPhone(
             (string) ($appointment->client?->telefono ?? ''),
             (string) ($request->query('phone') ?? $request->input('phone') ?? '')
         );
+        $verified = $otpOk || $phoneOk;
 
         $base = [
             'code' => $appointment->tracking_code,
@@ -504,6 +498,42 @@ class PublicBookingController extends Controller
         $first = mb_substr($name, 0, 1);
 
         return $first . str_repeat('*', max(2, mb_strlen($name) - 1));
+    }
+
+    public function requestTrackingOtp(Request $request, string $code, ?string $companySlug = null): JsonResponse
+    {
+        $companySlug = is_string($request->route('companySlug'))
+            ? (string) $request->route('companySlug')
+            : $companySlug;
+
+        $normalized = strtoupper(trim($code));
+        $query = Appointment::with('client')->where('tracking_code', $normalized);
+
+        if ($companySlug || $request->query('company') || $request->header('X-Booking-Slug')) {
+            try {
+                $query->where('company_id', $this->resolveCompany($request, $companySlug)->id);
+            } catch (NotFoundHttpException $e) {
+                return response()->json(['success' => false, 'message' => 'Empresa no encontrada.'], 404);
+            }
+        }
+
+        $appointment = $query->first();
+        if (! $appointment) {
+            // Respuesta genérica anti-enumeración
+            return response()->json([
+                'success' => true,
+                'message' => 'Si el código existe, enviamos un OTP.',
+                'data' => ['sent' => true],
+            ]);
+        }
+
+        $result = $this->trackingOtp->issue($appointment);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Código enviado. Revisa tu correo o contacta a la clínica si no llega.',
+            'data' => $result,
+        ]);
     }
 
     private function generateTrackingCode(): string

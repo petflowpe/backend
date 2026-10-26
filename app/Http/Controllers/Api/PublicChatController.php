@@ -6,26 +6,35 @@ use App\Http\Controllers\Controller;
 use App\Models\ChatConversation;
 use App\Models\ChatMessage;
 use App\Services\ChatSettingsService;
+use App\Services\PublicCompanyResolver;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
+use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 
 class PublicChatController extends Controller
 {
-    public function __construct(private ChatSettingsService $chatSettings)
-    {
+    public function __construct(
+        private ChatSettingsService $chatSettings,
+        private PublicCompanyResolver $companies,
+    ) {
     }
 
-    private function publicCompanyId(): int
+    private function companyId(Request $request, ?string $companySlug = null): int
     {
-        return (int) config('smartpet.public_company_id', 1);
+        return $this->companies->id($request, $companySlug);
     }
 
-    public function config(): JsonResponse
+    public function config(Request $request, ?string $companySlug = null): JsonResponse
     {
-        $companyId = $this->publicCompanyId();
+        try {
+            $companyId = $this->companyId($request, $companySlug);
+        } catch (NotFoundHttpException $e) {
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 404);
+        }
+
         $settings = $this->chatSettings->get($companyId);
 
         return response()->json([
@@ -35,13 +44,20 @@ class PublicChatController extends Controller
                 'agent_name' => $settings['agent_name'] ?? 'Soporte SmartPet',
                 'agent_role' => $settings['agent_role'] ?? 'Asistente en línea',
                 'welcome_message' => $settings['welcome_message'] ?? '',
+                'company_id' => $companyId,
             ],
         ]);
     }
 
-    public function start(Request $request): JsonResponse
+    public function start(Request $request, ?string $companySlug = null): JsonResponse
     {
-        if (!$this->chatSettings->get($this->publicCompanyId())['enabled']) {
+        try {
+            $companyId = $this->companyId($request, $companySlug);
+        } catch (NotFoundHttpException $e) {
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 404);
+        }
+
+        if (! $this->chatSettings->get($companyId)['enabled']) {
             return response()->json(['success' => false, 'message' => 'Chat no disponible'], 403);
         }
 
@@ -57,7 +73,6 @@ class PublicChatController extends Controller
             return response()->json(['success' => false, 'errors' => $validator->errors()], 422);
         }
 
-        $companyId = $this->publicCompanyId();
         $token = $request->input('guest_token');
 
         $conversation = null;
@@ -68,7 +83,7 @@ class PublicChatController extends Controller
                 ->first();
         }
 
-        if (!$conversation) {
+        if (! $conversation) {
             $token = Str::random(48);
             $conversation = ChatConversation::create([
                 'company_id' => $companyId,
@@ -102,7 +117,7 @@ class PublicChatController extends Controller
     public function messages(Request $request, string $guestToken): JsonResponse
     {
         $conversation = $this->findConversation($guestToken);
-        if (!$conversation) {
+        if (! $conversation) {
             return response()->json(['success' => false, 'message' => 'Conversación no encontrada'], 404);
         }
 
@@ -132,7 +147,7 @@ class PublicChatController extends Controller
         }
 
         $conversation = $this->findConversation($guestToken);
-        if (!$conversation || $conversation->status !== 'open') {
+        if (! $conversation || $conversation->status !== 'open') {
             return response()->json(['success' => false, 'message' => 'Conversación cerrada o no encontrada'], 404);
         }
 
@@ -147,7 +162,7 @@ class PublicChatController extends Controller
             ->where('created_at', '>=', now()->subHours(2))
             ->exists();
 
-        if ($autoReply && !$hasStaffReply) {
+        if ($autoReply && ! $hasStaffReply) {
             $systemMsg = $this->storeMessage($conversation, 'system', null, $autoReply);
             $newMessages[] = $this->formatMessage($systemMsg);
         }
@@ -160,9 +175,8 @@ class PublicChatController extends Controller
 
     private function findConversation(string $guestToken): ?ChatConversation
     {
-        return ChatConversation::where('guest_token', $guestToken)
-            ->where('company_id', $this->publicCompanyId())
-            ->first();
+        // El guest_token es secreto; no forzar company_id para no romper chats ya abiertos.
+        return ChatConversation::where('guest_token', $guestToken)->first();
     }
 
     private function storeVisitorMessage(ChatConversation $conversation, string $body): ChatMessage

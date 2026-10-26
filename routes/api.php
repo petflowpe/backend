@@ -95,6 +95,8 @@ Route::prefix('public/booking')->middleware('throttle:60,1')->group(function () 
     Route::post('/', [PublicBookingController::class, 'store'])
         ->middleware('throttle:public-booking-store');
     Route::get('/track/{code}', [PublicBookingController::class, 'track']);
+    Route::post('/track/{code}/otp', [PublicBookingController::class, 'requestTrackingOtp'])
+        ->middleware('throttle:10,1');
 
     // Multi-tenant: /public/booking/{slug}/...
     Route::prefix('{companySlug}')
@@ -106,6 +108,8 @@ Route::prefix('public/booking')->middleware('throttle:60,1')->group(function () 
             Route::post('/', [PublicBookingController::class, 'store'])
                 ->middleware('throttle:public-booking-store');
             Route::get('/track/{code}', [PublicBookingController::class, 'track']);
+            Route::post('/track/{code}/otp', [PublicBookingController::class, 'requestTrackingOtp'])
+                ->middleware('throttle:10,1');
         });
 });
 
@@ -114,6 +118,13 @@ Route::prefix('public/chat')->middleware('throttle:120,1')->group(function () {
     Route::post('/start', [\App\Http\Controllers\Api\PublicChatController::class, 'start']);
     Route::get('/{guestToken}/messages', [\App\Http\Controllers\Api\PublicChatController::class, 'messages']);
     Route::post('/{guestToken}/messages', [\App\Http\Controllers\Api\PublicChatController::class, 'send']);
+
+    Route::prefix('{companySlug}')
+        ->where(['companySlug' => '[a-z0-9][a-z0-9\-]{0,62}'])
+        ->group(function () {
+            Route::get('/config', [\App\Http\Controllers\Api\PublicChatController::class, 'config']);
+            Route::post('/start', [\App\Http\Controllers\Api\PublicChatController::class, 'start']);
+        });
 });
 
 Route::prefix('public/webhooks')->middleware('throttle:120,1')->group(function () {
@@ -651,20 +662,45 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'throttle:api', EnsureUserCompa
     // CITAS (APPOINTMENTS)
     // ========================
     Route::get('/booking/availability', [AppointmentController::class, 'availability']);
-    Route::apiResource('appointments', AppointmentController::class);
-    Route::post('/appointments/{appointment}/reschedule', [AppointmentController::class, 'reschedule']);
-    Route::post('/appointments/{appointment}/change-status', [AppointmentController::class, 'changeStatus']);
-    Route::post('/appointments/{appointment}/send-reminder', [AppointmentController::class, 'sendReminder']);
-    Route::post('/appointments/{appointment}/confirm', [AppointmentController::class, 'confirm']);
-    Route::post('/appointments/{appointment}/register-payment', [AppointmentController::class, 'registerPayment']);
-    Route::post('/appointments/{appointment}/pay-advance', [AppointmentController::class, 'payAdvance']);
-    Route::get('/appointments/{appointment}/billing-preview', [AppointmentController::class, 'billingPreview']);
-    Route::post('/appointments/{appointment}/issue-document', [AppointmentController::class, 'issueDocument']);
-    Route::get('/appointments/{appointment}/document-correction-options', [AppointmentController::class, 'documentCorrectionOptions']);
-    Route::post('/appointments/{appointment}/void-document', [AppointmentController::class, 'voidDocument']);
-    Route::post('/appointments/{appointment}/credit-note', [AppointmentController::class, 'issueCreditNote']);
-    Route::get('/clients/{clientId}/appointments', [AppointmentController::class, 'getByClient']);
-    Route::get('/appointments/recurring-series/{seriesId}', [AppointmentController::class, 'getRecurringSeries']);
+    // Citas: permission + fallback pets.* para no bloquear roles ya desplegados.
+    Route::get('/appointments', [AppointmentController::class, 'index'])
+        ->middleware('permission:appointments.view|appointments.manage|pets.view|pets.manage');
+    Route::post('/appointments', [AppointmentController::class, 'store'])
+        ->middleware('permission:appointments.create|appointments.manage|pets.create|pets.manage');
+    Route::get('/appointments/{appointment}', [AppointmentController::class, 'show'])
+        ->middleware('permission:appointments.view|appointments.manage|pets.view|pets.manage');
+    Route::put('/appointments/{appointment}', [AppointmentController::class, 'update'])
+        ->middleware('permission:appointments.update|appointments.manage|pets.update|pets.manage');
+    Route::patch('/appointments/{appointment}', [AppointmentController::class, 'update'])
+        ->middleware('permission:appointments.update|appointments.manage|pets.update|pets.manage');
+    Route::delete('/appointments/{appointment}', [AppointmentController::class, 'destroy'])
+        ->middleware('permission:appointments.delete|appointments.manage|pets.delete|pets.manage');
+    Route::post('/appointments/{appointment}/reschedule', [AppointmentController::class, 'reschedule'])
+        ->middleware('permission:appointments.update|appointments.manage|pets.update|pets.manage');
+    Route::post('/appointments/{appointment}/change-status', [AppointmentController::class, 'changeStatus'])
+        ->middleware('permission:appointments.update|appointments.manage|pets.update|pets.manage');
+    Route::post('/appointments/{appointment}/send-reminder', [AppointmentController::class, 'sendReminder'])
+        ->middleware('permission:appointments.update|appointments.manage|pets.manage');
+    Route::post('/appointments/{appointment}/confirm', [AppointmentController::class, 'confirm'])
+        ->middleware('permission:appointments.update|appointments.manage|pets.update|pets.manage');
+    Route::post('/appointments/{appointment}/register-payment', [AppointmentController::class, 'registerPayment'])
+        ->middleware('permission:appointments.manage|pets.manage');
+    Route::post('/appointments/{appointment}/pay-advance', [AppointmentController::class, 'payAdvance'])
+        ->middleware('permission:appointments.manage|pets.manage|appointments.update');
+    Route::get('/appointments/{appointment}/billing-preview', [AppointmentController::class, 'billingPreview'])
+        ->middleware('permission:appointments.view|appointments.manage|pets.view|pets.manage');
+    Route::post('/appointments/{appointment}/issue-document', [AppointmentController::class, 'issueDocument'])
+        ->middleware('permission:appointments.manage|invoices.create|boletas.create|pets.manage');
+    Route::get('/appointments/{appointment}/document-correction-options', [AppointmentController::class, 'documentCorrectionOptions'])
+        ->middleware('permission:appointments.view|appointments.manage|pets.view|pets.manage');
+    Route::post('/appointments/{appointment}/void-document', [AppointmentController::class, 'voidDocument'])
+        ->middleware('permission:appointments.manage|voided_documents.create|pets.manage');
+    Route::post('/appointments/{appointment}/credit-note', [AppointmentController::class, 'issueCreditNote'])
+        ->middleware('permission:appointments.manage|credit_notes.create|pets.manage');
+    Route::get('/clients/{clientId}/appointments', [AppointmentController::class, 'getByClient'])
+        ->middleware('permission:appointments.view|appointments.manage|pets.view|pets.manage');
+    Route::get('/appointments/recurring-series/{seriesId}', [AppointmentController::class, 'getRecurringSeries'])
+        ->middleware('permission:appointments.view|appointments.manage|pets.view|pets.manage');
 
     // ========================
     // VEHÍCULOS

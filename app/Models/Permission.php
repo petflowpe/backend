@@ -236,6 +236,15 @@ class Permission extends Model
                 'medical_records.update' => ['display_name' => 'Editar Historial Médico', 'description' => 'Actualizar registros médicos'],
                 'medical_records.delete' => ['display_name' => 'Eliminar Historial Médico', 'description' => 'Eliminar registros médicos'],
             ],
+
+            // Citas / agenda
+            'appointments' => [
+                'appointments.view' => ['display_name' => 'Ver Citas', 'description' => 'Consultar agenda y detalle de citas'],
+                'appointments.create' => ['display_name' => 'Crear Citas', 'description' => 'Registrar nuevas citas'],
+                'appointments.update' => ['display_name' => 'Editar Citas', 'description' => 'Reprogramar y actualizar citas'],
+                'appointments.delete' => ['display_name' => 'Cancelar Citas', 'description' => 'Cancelar o eliminar citas'],
+                'appointments.manage' => ['display_name' => 'Administrar Citas', 'description' => 'Gestión completa de citas, pagos y facturación'],
+            ],
         ];
     }
 

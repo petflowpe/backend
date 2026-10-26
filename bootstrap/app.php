@@ -39,5 +39,9 @@ return Application::configure(basePath: dirname(__DIR__))
         $schedule->command('sunat:poll-tickets')
             ->everyFiveMinutes()
             ->withoutOverlapping(10);
+
+        $schedule->command('backup:private-data')
+            ->dailyAt('02:30')
+            ->withoutOverlapping(60);
     })
     ->create();

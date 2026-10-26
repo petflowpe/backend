@@ -45,7 +45,7 @@ class CompanyController extends Controller
 
             $companies = $query
                 ->select([
-                    'id', 'ruc', 'razon_social', 'nombre_comercial',
+                    'id', 'ruc', 'razon_social', 'nombre_comercial', 'booking_slug',
                     'direccion', 'distrito', 'provincia', 'departamento',
                     'email', 'telefono', 'modo_produccion', 'activo',
                     'created_at', 'updated_at',
@@ -284,6 +284,11 @@ class CompanyController extends Controller
         $validatedData['activo'] = $this->processBoolean($validatedData['activo'] ?? true);
         $validatedData['usuario_sol'] = $validatedData['usuario_sol'] ?? 'DEMO';
         $validatedData['clave_sol'] = $validatedData['clave_sol'] ?? 'DEMO';
+
+        if (array_key_exists('booking_slug', $validatedData)) {
+            $slug = \Illuminate\Support\Str::slug((string) ($validatedData['booking_slug'] ?? ''));
+            $validatedData['booking_slug'] = $slug !== '' ? $slug : null;
+        }
 
         // El certificado PEM se guarda en disco privado tras create/update (ver storeCertificateIfPresent).
         unset($validatedData['certificado_pem']);
