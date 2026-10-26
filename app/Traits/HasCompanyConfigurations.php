@@ -381,12 +381,19 @@ trait HasCompanyConfigurations
     public function getSunatEndpoints(string $serviceType = 'facturacion'): array
     {
         $environment = $this->modo_produccion ? 'produccion' : 'beta';
-        
-        return $this->getConfig('service_endpoints', $environment, $serviceType, [
-            'endpoint' => '',
-            'wsdl' => '',
-            'timeout' => 30
-        ]);
+        $fallback = $this->defaultSunatEndpointsFallback($serviceType, $environment);
+
+        $config = $this->getConfig('service_endpoints', $environment, $serviceType, $fallback);
+        if (! is_array($config)) {
+            return $fallback;
+        }
+
+        // Si la config en BD existe pero el endpoint está vacío, no romper CPE.
+        if (empty($config['endpoint'])) {
+            return array_merge($fallback, array_filter($config, fn ($v) => $v !== null && $v !== ''));
+        }
+
+        return array_merge($fallback, $config);
     }
 
     /**
@@ -395,7 +402,54 @@ trait HasCompanyConfigurations
     public function getSunatEndpoint(string $serviceType, string $type = 'endpoint'): string
     {
         $endpoints = $this->getSunatEndpoints($serviceType);
-        return $endpoints[$type] ?? '';
+        $value = $endpoints[$type] ?? '';
+
+        if ($value !== '' && $value !== null) {
+            return (string) $value;
+        }
+
+        $fallback = $this->defaultSunatEndpointsFallback(
+            $serviceType,
+            $this->modo_produccion ? 'produccion' : 'beta'
+        );
+
+        return (string) ($fallback[$type] ?? '');
+    }
+
+    /**
+     * Endpoints oficiales SUNAT (+ columnas companies.endpoint_*) cuando no hay service_endpoints en BD.
+     *
+     * @return array{endpoint: string, wsdl?: string, api_endpoint?: string, timeout: int}
+     */
+    protected function defaultSunatEndpointsFallback(string $serviceType, string $environment): array
+    {
+        if ($serviceType === 'guias_remision') {
+            if ($environment === 'produccion') {
+                return [
+                    'endpoint' => 'https://api-cpe.sunat.gob.pe/v1/',
+                    'api_endpoint' => 'https://api-cpe.sunat.gob.pe/v1/',
+                    'wsdl' => 'https://e-guiaremision.sunat.gob.pe/ol-ti-itemision-guia-gem/billService?wsdl',
+                    'timeout' => 45,
+                ];
+            }
+
+            return [
+                'endpoint' => 'https://api-cpe-beta.sunat.gob.pe/v1/',
+                'api_endpoint' => 'https://api-cpe-beta.sunat.gob.pe/v1/',
+                'wsdl' => 'https://e-beta.sunat.gob.pe/ol-ti-itcpgre-beta/billService?wsdl',
+                'timeout' => 30,
+            ];
+        }
+
+        $endpoint = $environment === 'produccion'
+            ? (string) ($this->endpoint_produccion ?: 'https://e-factura.sunat.gob.pe/ol-ti-itcpfegem/billService')
+            : (string) ($this->endpoint_beta ?: 'https://e-beta.sunat.gob.pe/ol-ti-itcpfegem-beta/billService');
+
+        return [
+            'endpoint' => $endpoint,
+            'wsdl' => str_contains($endpoint, '?') ? $endpoint : ($endpoint . '?wsdl'),
+            'timeout' => $environment === 'produccion' ? 45 : 30,
+        ];
     }
 
     /**
@@ -667,12 +721,12 @@ trait HasCompanyConfigurations
                 'environment' => 'beta',
                 'service_type' => 'guias_remision',
                 'config_data' => [
-                    'endpoint' => 'https://gre-test.nubefact.com/v1',
+                    'endpoint' => 'https://api-cpe-beta.sunat.gob.pe/v1/',
                     'api_endpoint' => 'https://api-cpe-beta.sunat.gob.pe/v1/',
                     'wsdl' => 'https://e-beta.sunat.gob.pe/ol-ti-itcpgre-beta/billService?wsdl',
                     'timeout' => 30,
                 ],
-                'description' => 'Endpoints para guías de remisión en ambiente beta'
+                'description' => 'Endpoints para guías de remisión en ambiente beta (SUNAT)'
             ],
 
             // Endpoints de servicios SUNAT - Producción

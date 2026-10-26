@@ -6,6 +6,7 @@ use App\Traits\HasCompanyConfigurations;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Support\Str;
 
 class Company extends Model
 {
@@ -121,88 +122,40 @@ class Company extends Model
         return $query->where('activo', true);
     }
 
-    /**
-     * Bootstrap del modelo
-     */
     protected static function boot()
     {
         parent::boot();
-        
-        // Al crear una nueva empresa, configurar endpoints por defecto
+
         static::creating(function ($company) {
-            // Asignar endpoints por defecto si no están definidos
             if (empty($company->endpoint_beta)) {
                 $company->endpoint_beta = 'https://e-beta.sunat.gob.pe/ol-ti-itcpfegem-beta/billService';
             }
-            
+
             if (empty($company->endpoint_produccion)) {
                 $company->endpoint_produccion = 'https://e-factura.sunat.gob.pe/ol-ti-itcpfegem/billService';
             }
-            
-            // Asignar valores por defecto
+
             $company->activo = $company->activo ?? true;
             $company->modo_produccion = $company->modo_produccion ?? false;
+
+            if (empty($company->booking_slug)) {
+                $base = Str::slug((string) ($company->nombre_comercial ?: $company->razon_social ?: 'empresa'));
+                if ($base === '') {
+                    $base = 'empresa';
+                }
+                $slug = $base;
+                $n = 2;
+                while (static::where('booking_slug', $slug)->exists()) {
+                    $slug = $base . '-' . $n;
+                    $n++;
+                }
+                $company->booking_slug = $slug;
+            }
         });
-        
-        // Después de crear una empresa, inicializar configuraciones por defecto
-        // TEMPORALMENTE DESHABILITADO - Solo crear empresa sin configuraciones adicionales
-        // static::created(function ($company) {
-        //     $company->initializeDefaultConfigurations();
-        // });
-    }
 
-    /**
-     * Inicializar configuraciones por defecto para una empresa nueva
-     * TEMPORALMENTE DESHABILITADO - Solo crear empresa básica
-     */
-    public function initializeDefaultConfigurations(): void
-    {
-        // DESHABILITADO TEMPORALMENTE
-        return;
-        
-        // Configuraciones de impuestos
-        $this->setConfig('tax_settings', [
-            'igv_porcentaje' => 18.00,
-            'isc_porcentaje' => 0.00,
-            'icbper_monto' => 0.50,
-            'ivap_porcentaje' => 4.00,
-            'redondeo_automatico' => true,
-            'decimales_precio_unitario' => 10,
-            'decimales_cantidad' => 10
-        ], 'general', 'general');
-
-        // Configuraciones de documentos
-        $this->setConfig('document_settings', [
-            'generar_xml_automatico' => true,
-            'generar_pdf_automatico' => true,
-            'enviar_sunat_automatico' => false,
-            'formato_pdf_default' => 'a4',
-            'orientacion_pdf_default' => 'portrait',
-            'incluir_qr_pdf' => true,
-            'incluir_hash_pdf' => true,
-            'logo_en_pdf' => true
-        ], 'general', 'general');
-
-        // Endpoints de servicios para beta
-        $this->setConfig('service_endpoints', [
-            'endpoint' => $this->endpoint_beta,
-            'wsdl' => str_replace('billService', 'billService?wsdl', $this->endpoint_beta),
-            'timeout' => 30
-        ], 'beta', 'facturacion');
-
-        // Endpoints de servicios para producción
-        $this->setConfig('service_endpoints', [
-            'endpoint' => $this->endpoint_produccion,
-            'wsdl' => str_replace('billService', 'billService?wsdl', $this->endpoint_produccion),
-            'timeout' => 30
-        ], 'produccion', 'facturacion');
-
-        // Endpoints para guías de remisión (beta)
-        $this->setConfig('service_endpoints', [
-            'endpoint' => 'https://gre-test.nubefact.com/v1',
-            'api_endpoint' => 'https://api-cpe-beta.sunat.gob.pe/v1/',
-            'wsdl' => 'https://e-beta.sunat.gob.pe/ol-ti-itcpgre-beta/billService?wsdl',
-            'timeout' => 30
-        ], 'beta', 'guias_remision');
+        // Trait HasCompanyConfigurations: service_endpoints, tax, documents, etc.
+        static::created(function ($company) {
+            $company->initializeDefaultConfigurations();
+        });
     }
 }

@@ -22,6 +22,13 @@ class AuthController extends Controller
      */
     public function initialize(Request $request)
     {
+        if (app()->environment('production')) {
+            return response()->json([
+                'message' => 'Inicialización pública deshabilitada en producción.',
+                'status' => 'error',
+            ], 403);
+        }
+
         // Verificar si ya hay usuarios en el sistema
         if (User::count() > 0) {
             return response()->json([

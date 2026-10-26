@@ -204,6 +204,9 @@ jobs:
           echo "Ejecutando migraciones..."
           php artisan migrate --force
 
+          echo "Sincronizando permisos/roles de sistema..."
+          php artisan permissions:sync-system || true
+
           if [ "$RUN_SEEDERS" = "true" ]; then
             echo "Ejecutando seeders (RUN_SEEDERS_ON_DEPLOY=true)..."
             php artisan db:seed --force
@@ -244,6 +247,10 @@ jobs:
           fi
           php artisan event:cache 2>/dev/null || true
 
+          echo "Health check PE..."
+          php artisan pe:health || echo "::warning::pe:health reportó fallos — revisar en VPS"
+
+          echo "Recordatorio: cron debe ejecutar * * * * * php artisan schedule:run"
           echo "Deploy backend completado"
           REMOTE_SCRIPT
 
@@ -301,9 +308,13 @@ jobs:
         if: env.DEPLOY_FRONTEND == '1'
         env:
           VITE_API_URL: ${{ secrets.VITE_API_URL }}
+          VITE_PUBLIC_BOOKING_SLUG: ${{ secrets.VITE_PUBLIC_BOOKING_SLUG }}
           VITE_SENTRY_DSN: ${{ secrets.VITE_SENTRY_DSN }}
         run: |
-          export VITE_API_URL="${VITE_API_URL:-https://srv1197160.hstgr.cloud/api}"
+          export VITE_API_URL="${VITE_API_URL:-https://api.petflow.com/api}"
+          export VITE_PUBLIC_BOOKING_SLUG="${VITE_PUBLIC_BOOKING_SLUG:-}"
+          echo "VITE_API_URL=$VITE_API_URL"
+          echo "VITE_PUBLIC_BOOKING_SLUG=${VITE_PUBLIC_BOOKING_SLUG:-'(vacío — fallback company_id)'}"
           npm ci
           npm run build
 

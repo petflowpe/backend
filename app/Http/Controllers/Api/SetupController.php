@@ -192,11 +192,10 @@ class SetupController extends Controller
                 'certificates_directory' => $this->checkCertificatesDirectory(),
                 'app_environment' => config('app.env'),
                 'company_environment' => $company ? ($company->modo_produccion ? 'produccion' : 'beta') : null,
-                'debug' => config('app.debug'),
                 'app_key_set' => !empty(config('app.key')),
                 'certificate_exists' => $company ? app(CompanyCertificateService::class)->exists($company) : false,
                 'logo_exists' => $company ? !empty($company->logo_path) : false,
-                
+
                 // Estado de configuración paso a paso
                 'setup_progress' => [
                     'step_1_migrations' => !$migracionesPendientes,
@@ -205,6 +204,11 @@ class SetupController extends Controller
                     'step_4_ready' => !$migracionesPendientes && $ubigeosCargados && Company::count() > 0
                 ]
             ];
+
+            // No filtrar debug/key fuera de producción (útil en staging).
+            if (! app()->environment('production')) {
+                $status['debug'] = config('app.debug');
+            }
 
             $status['ready_for_use'] = $status['database_connected'] && 
                                       !$status['migrations_pending'] &&
