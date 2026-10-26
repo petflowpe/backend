@@ -33,6 +33,10 @@ class AppServiceProvider extends ServiceProvider
             return Limit::perMinute(120)->by($request->user()?->id ?: $request->ip());
         });
 
+        RateLimiter::for('public-booking-store', function (Request $request) {
+            return Limit::perMinute(8)->by($request->ip());
+        });
+
         \App\Models\Pet::observe(\App\Observers\PetObserver::class);
         \App\Models\Appointment::observe(\App\Observers\AppointmentStockObserver::class);
         \App\Models\AppointmentItem::observe(\App\Observers\AppointmentStockObserver::class);

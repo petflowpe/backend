@@ -15,6 +15,7 @@ class Company extends Model
         'ruc',
         'razon_social',
         'nombre_comercial',
+        'booking_slug',
         'direccion',
         'ubigeo',
         'distrito',

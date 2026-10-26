@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\Appointment;
 use App\Models\Client;
+use App\Models\Company;
 use App\Models\CompanyConfiguration;
 use App\Models\Pet;
 use App\Models\Service;
@@ -20,17 +21,53 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
+use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 
 class PublicBookingController extends Controller
 {
-    private function publicCompanyId(): int
+    /**
+     * Resuelve la empresa del portal: ruta {companySlug}, header, query o fallback .env.
+     */
+    private function resolveCompany(Request $request, ?string $companySlug = null): Company
     {
-        return (int) config('smartpet.public_company_id', 1);
+        $raw = $companySlug
+            ?? $request->header('X-Booking-Slug')
+            ?? $request->query('company')
+            ?? $request->query('slug')
+            ?? config('smartpet.public_booking_slug');
+
+        $slug = is_string($raw) ? Str::slug(trim($raw)) : '';
+
+        if ($slug !== '') {
+            $company = Company::query()
+                ->where('activo', true)
+                ->where('booking_slug', $slug)
+                ->first();
+
+            if (! $company) {
+                throw new NotFoundHttpException('Empresa de reservas no encontrada.');
+            }
+
+            return $company;
+        }
+
+        $fallbackId = (int) config('smartpet.public_company_id', 1);
+        $company = Company::query()
+            ->where('activo', true)
+            ->whereKey($fallbackId)
+            ->first();
+
+        if (! $company) {
+            throw new NotFoundHttpException('Empresa de reservas no configurada.');
+        }
+
+        return $company;
     }
 
-    public function config(): JsonResponse
+    public function config(Request $request, ?string $companySlug = null): JsonResponse
     {
-        $companyId = $this->publicCompanyId();
+        $company = $this->resolveCompany($request, $companySlug);
+        $companyId = (int) $company->id;
 
         $workingHours = null;
         $config = CompanyConfiguration::where('company_id', $companyId)
@@ -49,15 +86,17 @@ class PublicBookingController extends Controller
             'success' => true,
             'data' => [
                 'company_id' => $companyId,
+                'booking_slug' => $company->booking_slug,
+                'company_name' => $company->nombre_comercial ?: $company->razon_social,
                 'working_hours' => $workingHours,
                 'portal_settings' => $portalSettings,
             ],
         ]);
     }
 
-    public function services(): JsonResponse
+    public function services(Request $request, ?string $companySlug = null): JsonResponse
     {
-        $companyId = $this->publicCompanyId();
+        $companyId = (int) $this->resolveCompany($request, $companySlug)->id;
 
         $dbServices = Service::query()
             ->where('company_id', $companyId)
@@ -100,7 +139,7 @@ class PublicBookingController extends Controller
         ]);
     }
 
-    public function availability(Request $request): JsonResponse
+    public function availability(Request $request, ?string $companySlug = null): JsonResponse
     {
         $validator = Validator::make($request->all(), [
             'date' => 'required|date|after_or_equal:today',
@@ -116,7 +155,7 @@ class PublicBookingController extends Controller
             ], 422);
         }
 
-        $companyId = $this->publicCompanyId();
+        $companyId = (int) $this->resolveCompany($request, $companySlug)->id;
         $date = Carbon::parse($request->input('date'));
         $duration = (int) $request->input('duration', 60);
         $district = $request->input('district');
@@ -143,8 +182,20 @@ class PublicBookingController extends Controller
         ]);
     }
 
-    public function store(Request $request): JsonResponse
+    public function store(Request $request, ?string $companySlug = null): JsonResponse
     {
+        // Honeypot anti-bot: campo oculto que los humanos dejan vacío.
+        if (filled($request->input('website')) || filled($request->input('company_url'))) {
+            return response()->json([
+                'success' => true,
+                'message' => 'Reserva registrada correctamente',
+                'data' => [
+                    'tracking_code' => 'SPT-OK',
+                    'appointment_id' => 0,
+                ],
+            ], 201);
+        }
+
         $validator = Validator::make($request->all(), [
             'client.tipo_documento' => 'required|string|in:1,4,6,7,0',
             'client.numero_documento' => 'required|string|max:20',
@@ -182,7 +233,7 @@ class PublicBookingController extends Controller
         }
 
         $payload = $validator->validated();
-        $companyId = $this->publicCompanyId();
+        $companyId = (int) $this->resolveCompany($request, $companySlug)->id;
 
         /** @var PortalBookingService $portalService */
         $portalService = app(PortalBookingService::class);
@@ -235,16 +286,32 @@ class PublicBookingController extends Controller
                 ]);
             }
 
-            $pet = Pet::create([
-                'client_id' => $client->id,
-                'company_id' => $companyId,
-                'name' => $petInput['name'],
-                'species' => $petInput['species'],
-                'breed' => $petInput['breed'] ?? null,
-                'age' => $petInput['age'] ?? null,
-                'weight' => $petInput['weight'] ?? null,
-                'fecha_registro' => now()->toDateString(),
-            ]);
+            $petName = trim((string) $petInput['name']);
+            $pet = Pet::query()
+                ->where('client_id', $client->id)
+                ->where('company_id', $companyId)
+                ->where('species', $petInput['species'])
+                ->whereRaw('LOWER(name) = ?', [mb_strtolower($petName)])
+                ->first();
+
+            if ($pet) {
+                $pet->update([
+                    'breed' => $petInput['breed'] ?? $pet->breed,
+                    'age' => $petInput['age'] ?? $pet->age,
+                    'weight' => $petInput['weight'] ?? $pet->weight,
+                ]);
+            } else {
+                $pet = Pet::create([
+                    'client_id' => $client->id,
+                    'company_id' => $companyId,
+                    'name' => $petName,
+                    'species' => $petInput['species'],
+                    'breed' => $petInput['breed'] ?? null,
+                    'age' => $petInput['age'] ?? null,
+                    'weight' => $petInput['weight'] ?? null,
+                    'fecha_registro' => now()->toDateString(),
+                ]);
+            }
 
             $catalog = $this->resolvePublicService($companyId, $aptInput);
             if (! $catalog) {
@@ -331,55 +398,112 @@ class PublicBookingController extends Controller
         }
     }
 
-    public function track(string $code): JsonResponse
+    public function track(Request $request, string $code, ?string $companySlug = null): JsonResponse
     {
+        $companySlug = is_string($request->route('companySlug'))
+            ? (string) $request->route('companySlug')
+            : $companySlug;
+
         $normalized = strtoupper(trim($code));
 
-        $appointment = Appointment::with(['client', 'pet', 'vehicle'])
-            ->where('tracking_code', $normalized)
-            ->first();
+        $query = Appointment::with(['client', 'pet', 'vehicle'])
+            ->where('tracking_code', $normalized);
 
-        if (!$appointment) {
+        if ($companySlug || $request->query('company') || $request->header('X-Booking-Slug')) {
+            try {
+                $companyId = (int) $this->resolveCompany($request, $companySlug)->id;
+                $query->where('company_id', $companyId);
+            } catch (NotFoundHttpException $e) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Empresa de reservas no encontrada.',
+                ], 404);
+            }
+        }
+
+        $appointment = $query->first();
+
+        if (! $appointment) {
             return response()->json([
                 'success' => false,
                 'message' => 'No encontramos una reserva con ese código.',
             ], 404);
         }
 
-        $vehicle = $appointment->vehicle;
-        $driverName = $vehicle?->driver_name ?? null;
-        $vehicleLabel = $vehicle
-            ? trim(($vehicle->marca ?? '') . ' ' . ($vehicle->modelo ?? $vehicle->name ?? '') . ($vehicle->placa ? ' • ' . $vehicle->placa : ''))
-            : null;
+        $verified = $this->verifyTrackingPhone(
+            (string) ($appointment->client?->telefono ?? ''),
+            (string) ($request->query('phone') ?? $request->input('phone') ?? '')
+        );
+
+        $base = [
+            'code' => $appointment->tracking_code,
+            'status' => $this->mapStatusForTracking($appointment->status),
+            'status_label' => $appointment->status,
+            'verified' => $verified,
+            'service' => [
+                'name' => $appointment->service_name,
+                'price' => $verified ? (float) $appointment->total : null,
+            ],
+            'pet' => [
+                'name' => $verified ? $appointment->pet?->name : $this->maskName($appointment->pet?->name),
+                'breed' => $verified ? $appointment->pet?->breed : null,
+                'species' => $appointment->pet?->species,
+            ],
+            'schedule' => [
+                'date' => $appointment->date?->format('Y-m-d'),
+                'time' => substr((string) $appointment->time, 0, 5),
+                'address' => $verified ? $appointment->address : null,
+                'district' => $appointment->district,
+            ],
+            'driver' => null,
+        ];
+
+        if ($verified) {
+            $vehicle = $appointment->vehicle;
+            $driverName = $vehicle?->driver_name ?? null;
+            $vehicleLabel = $vehicle
+                ? trim(($vehicle->marca ?? '') . ' ' . ($vehicle->modelo ?? $vehicle->name ?? '') . ($vehicle->placa ? ' • ' . $vehicle->placa : ''))
+                : null;
+            $base['driver'] = $driverName ? [
+                'name' => $driverName,
+                'vehicle' => $vehicleLabel,
+                'phone' => null,
+            ] : null;
+        }
 
         return response()->json([
             'success' => true,
-            'data' => [
-                'code' => $appointment->tracking_code,
-                'status' => $this->mapStatusForTracking($appointment->status),
-                'status_label' => $appointment->status,
-                'service' => [
-                    'name' => $appointment->service_name,
-                    'price' => (float) $appointment->total,
-                ],
-                'pet' => [
-                    'name' => $appointment->pet?->name,
-                    'breed' => $appointment->pet?->breed,
-                    'species' => $appointment->pet?->species,
-                ],
-                'schedule' => [
-                    'date' => $appointment->date?->format('Y-m-d'),
-                    'time' => substr((string) $appointment->time, 0, 5),
-                    'address' => $appointment->address,
-                    'district' => $appointment->district,
-                ],
-                'driver' => $driverName ? [
-                    'name' => $driverName,
-                    'vehicle' => $vehicleLabel,
-                    'phone' => null,
-                ] : null,
-            ],
+            'data' => $base,
         ]);
+    }
+
+    private function verifyTrackingPhone(string $storedPhone, string $provided): bool
+    {
+        $digitsStored = preg_replace('/\D+/', '', $storedPhone) ?? '';
+        $digitsProvided = preg_replace('/\D+/', '', $provided) ?? '';
+
+        if ($digitsProvided === '' || $digitsStored === '') {
+            return false;
+        }
+
+        if ($digitsProvided === $digitsStored) {
+            return true;
+        }
+
+        // Últimos 4 dígitos bastan para desbloquear detalle.
+        return strlen($digitsProvided) >= 4
+            && str_ends_with($digitsStored, substr($digitsProvided, -4));
+    }
+
+    private function maskName(?string $name): ?string
+    {
+        if ($name === null || $name === '') {
+            return null;
+        }
+        $name = trim($name);
+        $first = mb_substr($name, 0, 1);
+
+        return $first . str_repeat('*', max(2, mb_strlen($name) - 1));
     }
 
     private function generateTrackingCode(): string

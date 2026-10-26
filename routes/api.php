@@ -88,11 +88,25 @@ Route::post('/auth/request-access', [AuthController::class, 'requestAccess']);
 
 // Reserva y seguimiento público (portal invitado)
 Route::prefix('public/booking')->middleware('throttle:60,1')->group(function () {
+    // Legacy: empresa por SMARTPET_PUBLIC_COMPANY_ID / slug default
     Route::get('/config', [PublicBookingController::class, 'config']);
     Route::get('/services', [PublicBookingController::class, 'services']);
     Route::get('/availability', [PublicBookingController::class, 'availability']);
-    Route::post('/', [PublicBookingController::class, 'store']);
+    Route::post('/', [PublicBookingController::class, 'store'])
+        ->middleware('throttle:public-booking-store');
     Route::get('/track/{code}', [PublicBookingController::class, 'track']);
+
+    // Multi-tenant: /public/booking/{slug}/...
+    Route::prefix('{companySlug}')
+        ->where(['companySlug' => '[a-z0-9][a-z0-9\-]{0,62}'])
+        ->group(function () {
+            Route::get('/config', [PublicBookingController::class, 'config']);
+            Route::get('/services', [PublicBookingController::class, 'services']);
+            Route::get('/availability', [PublicBookingController::class, 'availability']);
+            Route::post('/', [PublicBookingController::class, 'store'])
+                ->middleware('throttle:public-booking-store');
+            Route::get('/track/{code}', [PublicBookingController::class, 'track']);
+        });
 });
 
 Route::prefix('public/chat')->middleware('throttle:120,1')->group(function () {

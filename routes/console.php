@@ -140,6 +140,7 @@ Artisan::command('pilot:setup
         [
             'razon_social' => $companyName,
             'nombre_comercial' => $companyTradeName,
+            'booking_slug' => \Illuminate\Support\Str::slug($companyTradeName) ?: 'petflow',
             'direccion' => 'Av. Piloto 123',
             'ubigeo' => '150101',
             'distrito' => 'Lima',
