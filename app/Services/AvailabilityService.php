@@ -8,6 +8,7 @@ use App\Models\CompanyConfiguration;
 use App\Models\Vehicle;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 
 class AvailabilityService
 {
@@ -344,6 +345,45 @@ class AvailabilityService
             'reason' => $evaluation['reason'] ?? null,
             'message' => $evaluation['message'] ?? null,
         ];
+    }
+
+    /**
+     * Bloquea citas del día (FOR UPDATE) y revalida el slot.
+     * Debe llamarse dentro de una transacción DB abierta.
+     *
+     * @return array{valid: bool, reason?: string|null, message?: string|null}
+     */
+    public function claimSlot(
+        int $companyId,
+        Carbon $date,
+        string $time,
+        int $duration = 60,
+        ?string $district = null,
+        ?int $vehicleId = null,
+        ?int $excludeAppointmentId = null
+    ): array {
+        if (DB::transactionLevel() < 1) {
+            throw new \RuntimeException('claimSlot requiere una transacción DB abierta.');
+        }
+
+        // Serializa reservas concurrentes del mismo día/empresa.
+        Appointment::query()
+            ->where('company_id', $companyId)
+            ->whereDate('date', $date->toDateString())
+            ->whereNotIn('status', ['Cancelada'])
+            ->orderBy('id')
+            ->lockForUpdate()
+            ->get(['id']);
+
+        return $this->validateSlot(
+            $companyId,
+            $date,
+            $time,
+            $duration,
+            $district,
+            $vehicleId,
+            $excludeAppointmentId
+        );
     }
 
     private function normalizeTime(string $time): string

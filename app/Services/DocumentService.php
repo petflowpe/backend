@@ -415,6 +415,29 @@ class DocumentService
         return 'RECHAZADO';
     }
 
+    /**
+     * SUNAT aún procesa el ticket (código 98 u otros “en proceso”).
+     *
+     * @param  array{success?: bool, cdr_response?: mixed, error?: mixed}  $result
+     */
+    protected function isSunatTicketPending(array $result): bool
+    {
+        if (! empty($result['success']) && empty($result['cdr_response'])) {
+            return true;
+        }
+
+        $error = $result['error'] ?? null;
+        if ($error === null) {
+            return false;
+        }
+
+        $code = is_object($error)
+            ? ($error->code ?? $error->getCode ?? null)
+            : (is_array($error) ? ($error['code'] ?? null) : null);
+
+        return (string) $code === '98' || (int) $code === 98;
+    }
+
     protected function calculateTotals(array &$detalles, array $globalData = []): array
     {
         $totals = [
@@ -869,7 +892,7 @@ class DocumentService
             $greenterService = new GreenterService($company);
             
             $result = $greenterService->checkSummaryStatus($summary->ticket);
-            
+
             if ($result['success'] && $result['cdr_response']) {
                 $cdrPath = $this->fileService->saveCdr($summary, $result['cdr_zip']);
                 $cdrCode = $result['cdr_response']->getCode();
@@ -901,26 +924,34 @@ class DocumentService
                         'error' => $e->getMessage(),
                     ]);
                 }
-                
+
                 return [
                     'success' => true,
                     'document' => $summary->fresh(),
-                    'cdr_response' => $result['cdr_response']
-                ];
-            } else {
-                // Error en la consulta
-                $summary->update([
-                    'estado_proceso' => 'ERROR',
-                    'estado_sunat' => 'RECHAZADO',
-                    'respuesta_sunat' => json_encode($result['error'])
-                ]);
-                
-                return [
-                    'success' => false,
-                    'document' => $summary->fresh(),
-                    'error' => $result['error']
+                    'cdr_response' => $result['cdr_response'],
                 ];
             }
+
+            // Ticket aún en proceso en SUNAT (p.ej. código 98): no marcar rechazado.
+            if ($this->isSunatTicketPending($result)) {
+                return [
+                    'success' => true,
+                    'pending' => true,
+                    'document' => $summary,
+                ];
+            }
+
+            $summary->update([
+                'estado_proceso' => 'ERROR',
+                'estado_sunat' => 'RECHAZADO',
+                'respuesta_sunat' => json_encode($result['error']),
+            ]);
+
+            return [
+                'success' => false,
+                'document' => $summary->fresh(),
+                'error' => $result['error'],
+            ];
             
         } catch (Exception $e) {
             return [
@@ -2347,9 +2378,8 @@ class DocumentService
             $company = $voidedDocument->company;
             $greenterService = new GreenterService($company);
             
-            // Consultar estado con ticket
             $result = $greenterService->checkVoidedDocumentStatus($voidedDocument->ticket);
-            
+
             if ($result['success']) {
                 $cdrResponse = $result['cdr_response'];
                 $estado = 'PROCESANDO';
@@ -2380,18 +2410,27 @@ class DocumentService
                         ]);
                     }
                 }
-                
+
                 return [
                     'success' => true,
-                    'document' => $voidedDocument->fresh()
-                ];
-            } else {
-                return [
-                    'success' => false,
-                    'document' => $voidedDocument,
-                    'error' => $result['error']
+                    'pending' => $estado === 'PROCESANDO',
+                    'document' => $voidedDocument->fresh(),
                 ];
             }
+
+            if ($this->isSunatTicketPending($result)) {
+                return [
+                    'success' => true,
+                    'pending' => true,
+                    'document' => $voidedDocument,
+                ];
+            }
+
+            return [
+                'success' => false,
+                'document' => $voidedDocument,
+                'error' => $result['error'],
+            ];
         } catch (Exception $e) {
             return [
                 'success' => false,

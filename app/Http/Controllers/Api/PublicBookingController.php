@@ -254,6 +254,27 @@ class PublicBookingController extends Controller
             $date = Carbon::parse($aptInput['date']);
             $vehicleId = $this->resolveVehicleId($companyId, $client, $date, $aptInput['time'], $clientInput['distrito']);
 
+            /** @var AvailabilityService $availabilityService */
+            $availabilityService = app(AvailabilityService::class);
+            $slotCheck = $availabilityService->claimSlot(
+                $companyId,
+                $date,
+                (string) $aptInput['time'],
+                (int) $catalog['duration'],
+                (string) $clientInput['distrito'],
+                $vehicleId
+            );
+
+            if (! $slotCheck['valid']) {
+                DB::rollBack();
+
+                return response()->json([
+                    'success' => false,
+                    'message' => $slotCheck['message'] ?? 'El horario ya no está disponible.',
+                    'reason' => $slotCheck['reason'] ?? 'ocupado',
+                ], 409);
+            }
+
             $price = (float) $catalog['price'];
             $appointment = Appointment::create([
                 'tracking_code' => $this->generateTrackingCode(),

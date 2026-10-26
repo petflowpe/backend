@@ -2,205 +2,261 @@
 
 namespace App\Services;
 
-use Illuminate\Support\Facades\Storage;
 use Carbon\Carbon;
+use Illuminate\Support\Facades\Storage;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 
+/**
+ * XML / CDR / PDF fiscales: disco privado, una carpeta por empresa.
+ * Lectura dual: paths nuevos en local; legacy en public sin prefijo de empresa.
+ */
 class FileService
 {
-    public function saveXml($document, string $xmlContent): string
+    private const DISK = 'local'; // storage/app/private
+
+    private const LEGACY_DISK = 'public';
+
+    public function saveXml($document, string $xmlContent, ?string $typeHint = null): string
     {
-        $this->ensureDirectoryExists($document, 'xml');
-        $path = $this->generatePath($document, 'xml');
-        Storage::disk('public')->put($path, $xmlContent);
+        $path = $this->generatePath($document, 'xml', 'A4', $typeHint);
+        $this->put($path, $xmlContent);
+
         return $path;
     }
 
-    public function saveCdr($document, string $cdrContent): string
+    public function saveCdr($document, string $cdrContent, ?string $typeHint = null): string
     {
-        $this->ensureDirectoryExists($document, 'zip');
-        $path = $this->generatePath($document, 'zip');
-        Storage::disk('public')->put($path, $cdrContent);
+        $path = $this->generatePath($document, 'zip', 'A4', $typeHint);
+        $this->put($path, $cdrContent);
+
         return $path;
     }
 
-    public function savePdf($document, string $pdfContent, string $format = 'A4'): string
+    public function savePdf($document, string $pdfContent, string $format = 'A4', ?string $typeHint = null): string
     {
-        $this->ensureDirectoryExists($document, 'pdf');
-        $path = $this->generatePath($document, 'pdf', $format);
-        Storage::disk('public')->put($path, $pdfContent);
+        $path = $this->generatePath($document, 'pdf', $format, $typeHint);
+        $this->put($path, $pdfContent);
+
         return $path;
     }
 
-    protected function generatePath($document, string $extension, string $format = 'A4'): string
+    public function fileExists(?string $path): bool
     {
-        $date = Carbon::parse($document->fecha_emision);
-        $dateFolder = $date->format('dmY'); // Formato: 02092025
-        
-        $fileName = $document->numero_completo;
-        
-        // Obtener tipo de comprobante
-        $tipoComprobante = $this->getDocumentTypeName($document);
-        
-        // Determinar el tipo de archivo (xml, cdr o pdf)
-        $tipoArchivo = $extension === 'zip' ? 'cdr' : $extension;
-        
-        // Crear estructura: TIPO_COMPROBANTE/TIPO_ARCHIVO/DDMMYYYY/
-        $directory = "{$tipoComprobante}/{$tipoArchivo}/{$dateFolder}";
-        
-        // Prefijo según tipo de archivo
-        $prefix = '';
-        if ($extension === 'zip') {
-            $prefix = 'R-'; // CDR
+        if ($path === null || $path === '') {
+            return false;
         }
-        
-        // Para PDFs, agregar el formato al nombre del archivo si no es A4
+
+        return $this->resolveDisk($path) !== null;
+    }
+
+    /**
+     * @param  array<string, string>  $headers
+     */
+    public function downloadFile(string $path, string $downloadName, array $headers = []): ?StreamedResponse
+    {
+        $diskName = $this->resolveDisk($path);
+        if ($diskName === null) {
+            return null;
+        }
+
+        return Storage::disk($diskName)->download($path, $downloadName, $headers);
+    }
+
+    protected function put(string $path, string $content): void
+    {
+        $disk = Storage::disk(self::DISK);
+        $directory = dirname($path);
+        if ($directory !== '.' && $directory !== '') {
+            $disk->makeDirectory($directory);
+        }
+        $disk->put($path, $content);
+    }
+
+    /**
+     * Disco donde existe el path relativo (privado primero, luego público legacy).
+     */
+    protected function resolveDisk(string $path): ?string
+    {
+        if (Storage::disk(self::DISK)->exists($path)) {
+            return self::DISK;
+        }
+
+        if (Storage::disk(self::LEGACY_DISK)->exists($path)) {
+            return self::LEGACY_DISK;
+        }
+
+        return null;
+    }
+
+    protected function generatePath(
+        $document,
+        string $extension,
+        string $format = 'A4',
+        ?string $typeHint = null
+    ): string {
+        $companyId = (int) ($document->company_id ?? 0);
+        if ($companyId < 1) {
+            throw new \InvalidArgumentException(
+                'No se puede guardar archivo fiscal sin company_id en el documento.'
+            );
+        }
+
+        $date = $this->resolveDocumentDate($document);
+        $dateFolder = $date->format('dmY');
+        $fileName = $this->resolveFileName($document);
+        $tipoComprobante = $this->getDocumentTypeName($document, $typeHint);
+        $tipoArchivo = $extension === 'zip' ? 'cdr' : $extension;
+
+        $prefix = $extension === 'zip' ? 'R-' : '';
+
         if ($extension === 'pdf' && $format !== 'A4') {
             $fileName .= "_{$format}";
         }
-        
-        return "{$directory}/{$prefix}{$fileName}.{$extension}";
+
+        // companies/{id}/{tipo}/{xml|cdr|pdf}/DDMMYYYY/{file}
+        return "companies/{$companyId}/{$tipoComprobante}/{$tipoArchivo}/{$dateFolder}/{$prefix}{$fileName}.{$extension}";
     }
 
-    protected function getDocumentTypeName($document): string
+    protected function resolveDocumentDate($document): Carbon
     {
-        // Determinar el nombre de la carpeta según el tipo de documento
-        // Verificar si es un modelo Eloquent con el atributo tipo_documento
+        foreach (['fecha_emision', 'fecha_resumen', 'fecha_generacion', 'fecha_referencia'] as $field) {
+            if (! empty($document->{$field})) {
+                return Carbon::parse($document->{$field});
+            }
+        }
+
+        return Carbon::now();
+    }
+
+    protected function resolveFileName($document): string
+    {
+        $name = (string) ($document->numero_completo
+            ?? $document->identificador
+            ?? '');
+
+        $name = trim($name);
+        if ($name !== '') {
+            return preg_replace('/[^\w.\-]+/', '_', $name) ?: $name;
+        }
+
+        return 'doc-' . (string) ($document->id ?? uniqid('tmp', true));
+    }
+
+    protected function getDocumentTypeName($document, ?string $typeHint = null): string
+    {
+        if ($typeHint === 'retention' || $typeHint === 'retencion') {
+            return 'retenciones';
+        }
+        if ($typeHint === 'perception' || $typeHint === 'percepcion') {
+            return 'percepciones';
+        }
+
         if (isset($document->tipo_documento)) {
-            return match($document->tipo_documento) {
+            return match ((string) $document->tipo_documento) {
                 '01' => 'facturas',
                 '03' => 'boletas',
                 '07' => 'notas-credito',
                 '08' => 'notas-debito',
                 '09' => 'guias-remision',
-                '20' => 'percepciones',
-                '21' => 'retenciones',
-                default => 'otros-comprobantes'
+                '20' => 'retenciones',
+                '40' => 'percepciones',
+                'RA' => 'comunicaciones-baja',
+                'RC' => 'resumenes-diarios',
+                default => 'otros-comprobantes',
             };
         }
-        
-        // Fallback basado en el nombre de la clase del modelo
+
         $className = class_basename($document);
-        return match($className) {
-            'Invoice' => 'facturas',  // Corregido: Invoice en lugar de Factura
+
+        return match ($className) {
+            'Invoice' => 'facturas',
             'Boleta' => 'boletas',
             'CreditNote' => 'notas-credito',
-            'DebitNote' => 'notas-debito', 
+            'DebitNote' => 'notas-debito',
             'DispatchGuide' => 'guias-remision',
             'Percepcion' => 'percepciones',
             'Retencion' => 'retenciones',
             'DailySummary' => 'resumenes-diarios',
-            default => 'otros-comprobantes'
+            'VoidedDocument' => 'comunicaciones-baja',
+            default => 'otros-comprobantes',
         };
     }
 
     public function getXmlPath($document): ?string
     {
-        if (!$document->xml_path) {
-            return null;
-        }
-        
-        return Storage::disk('public')->exists($document->xml_path) 
-            ? Storage::disk('public')->path($document->xml_path)
-            : null;
+        return $this->absolutePath($document->xml_path ?? null);
     }
 
     public function getCdrPath($document): ?string
     {
-        if (!$document->cdr_path) {
-            return null;
-        }
-        
-        return Storage::disk('public')->exists($document->cdr_path)
-            ? Storage::disk('public')->path($document->cdr_path)
-            : null;
+        return $this->absolutePath($document->cdr_path ?? null);
     }
 
     public function getPdfPath($document): ?string
     {
-        if (!$document->pdf_path) {
+        return $this->absolutePath($document->pdf_path ?? null);
+    }
+
+    protected function absolutePath(?string $relative): ?string
+    {
+        if ($relative === null || $relative === '') {
             return null;
         }
-        
-        return Storage::disk('public')->exists($document->pdf_path)
-            ? Storage::disk('public')->path($document->pdf_path)
-            : null;
+
+        $diskName = $this->resolveDisk($relative);
+        if ($diskName === null) {
+            return null;
+        }
+
+        return Storage::disk($diskName)->path($relative);
     }
 
     public function downloadXml($document)
     {
-        if (!$document->xml_path || !Storage::disk('public')->exists($document->xml_path)) {
+        if (! $document->xml_path || ! $this->fileExists($document->xml_path)) {
             return null;
         }
-        
-        return Storage::disk('public')->download(
+
+        return $this->downloadFile(
             $document->xml_path,
-            $document->numero_completo . '.xml'
+            $this->resolveFileName($document) . '.xml',
+            ['Content-Type' => 'application/xml']
         );
     }
 
     public function downloadCdr($document)
     {
-        if (!$document->cdr_path || !Storage::disk('public')->exists($document->cdr_path)) {
+        if (! $document->cdr_path || ! $this->fileExists($document->cdr_path)) {
             return null;
         }
-        
-        return Storage::disk('public')->download(
+
+        return $this->downloadFile(
             $document->cdr_path,
-            'R-' . $document->numero_completo . '.zip'
+            'R-' . $this->resolveFileName($document) . '.zip',
+            ['Content-Type' => 'application/zip']
         );
     }
 
     public function downloadPdf($document)
     {
-        if (!$document->pdf_path || !Storage::disk('public')->exists($document->pdf_path)) {
+        if (! $document->pdf_path || ! $this->fileExists($document->pdf_path)) {
             return null;
         }
-        
-        return Storage::disk('public')->download(
+
+        return $this->downloadFile(
             $document->pdf_path,
-            $document->numero_completo . '.pdf'
+            $this->resolveFileName($document) . '.pdf',
+            ['Content-Type' => 'application/pdf']
         );
     }
 
     public function createDirectoryStructure(): void
     {
-        // Tipos de comprobantes
-        $tiposComprobantes = [
-            'facturas',
-            'boletas', 
-            'notas-credito',
-            'notas-debito',
-            'guias-remision',
-            'percepciones',
-            'retenciones',
-            'resumenes-diarios',
-            'otros-comprobantes'
-        ];
-        
-        // Tipos de archivos
-        $tiposArchivos = ['xml', 'cdr', 'pdf'];
-        
-        // Crear estructura de directorios base
-        foreach ($tiposComprobantes as $tipoComprobante) {
-            foreach ($tiposArchivos as $tipoArchivo) {
-                $directory = "{$tipoComprobante}/{$tipoArchivo}";
-                Storage::disk('public')->makeDirectory($directory);
-            }
-        }
+        // Estructura por empresa se crea al guardar; no hace falta seed global.
     }
 
     public function ensureDirectoryExists($document, string $extension): void
     {
-        $date = Carbon::parse($document->fecha_emision);
-        $dateFolder = $date->format('dmY');
-        
-        $tipoComprobante = $this->getDocumentTypeName($document);
-        $tipoArchivo = $extension === 'zip' ? 'cdr' : $extension;
-        
-        $directory = "{$tipoComprobante}/{$tipoArchivo}/{$dateFolder}";
-        
-        if (!Storage::disk('public')->exists($directory)) {
-            Storage::disk('public')->makeDirectory($directory);
-        }
+        // Compatibilidad: generatePath + put crean el directorio al guardar.
     }
 }
